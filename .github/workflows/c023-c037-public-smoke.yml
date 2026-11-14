@@ -33,6 +33,11 @@ jobs:
           DOTNET_CLI_TELEMETRY_OPTOUT: '1'
           DOTNET_NOLOGO: '1'
         run: bash tests/c023-c037-public-smoke/run.sh '${{ matrix.framework }}' '${{ matrix.runtime }}'
+      - name: Run HTTP2 loopback smoke
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: bash tests/c023-c037-public-smoke/run.sh '${{ matrix.framework }}' '${{ matrix.runtime }}' http2
       - name: Check published certificate sample guard
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: '1'
