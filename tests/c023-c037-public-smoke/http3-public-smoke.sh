@@ -13,6 +13,11 @@ dotnet --list-runtimes | grep -F "Microsoft.AspNetCore.App $expected_runtime ["
 workdir=$(mktemp -d)
 app_pid=''
 cleanup() {
+  local rc=$?
+  if [[ "$rc" -ne 0 && -f app.log ]]; then
+    echo 'Kestrel diagnostics:'
+    tail -n 100 app.log
+  fi
   if [[ -n "$app_pid" ]]; then
     kill "$app_pid" 2>/dev/null || true
     wait "$app_pid" 2>/dev/null || true
@@ -91,12 +96,15 @@ grep -q 'Now listening on: https://127.0.0.1:46023' app.log
 python3 - <<'PY'
 import asyncio
 import json
+import logging
 import ssl
 from aioquic.asyncio.client import connect
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.h3.connection import H3_ALPN, H3Connection
 from aioquic.h3.events import DataReceived, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
+
+logging.basicConfig(level=logging.DEBUG)
 
 class Client(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs):
