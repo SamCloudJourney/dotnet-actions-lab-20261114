@@ -65,3 +65,6 @@ jobs:
           run_round secret_control control network_secret.py
           run_round secret_attack1 attack network_secret.py
           run_round secret_attack2 attack network_secret.py
+          run_round auth_control control network_auth.py
+          run_round auth_attack1 attack network_auth.py
+          run_round auth_attack2 attack network_auth.py

@@ -3,14 +3,32 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using webapp.Components;
 using Microsoft.AspNetCore.Components.Server;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Components.Authorization;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<LabCoordinator>();
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie();
+builder.Services.AddAuthorization();
+builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 var app = builder.Build();
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapStaticAssets();
+
+app.MapPost("/lab/login", async (HttpContext context) =>
+{
+    if (context.Request.Headers["X-Lab-Setup"] != "owned-lab-victim") return Results.Unauthorized();
+    var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, "victim-lab-user") }, CookieAuthenticationDefaults.AuthenticationScheme));
+    await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, user);
+    return Results.Ok(new { authenticated = true });
+});
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.MapPost("/lab/trigger-victim", (LabCoordinator lab) =>
@@ -25,6 +43,10 @@ app.MapGet("/lab/state", (IServiceProvider services) =>
     var registryType = asm.GetType("Microsoft.AspNetCore.Components.Server.Circuits.CircuitRegistry", true)!;
     var registry = services.GetRequiredService(registryType);
     var circuits = (IEnumerable)registryType.GetProperty("ConnectedCircuits", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.GetValue(registry)!;
+    var hubType = asm.GetType("Microsoft.AspNetCore.Components.Server.ComponentHub", true)!;
+    var managerType = typeof(HubLifetimeManager<>).MakeGenericType(hubType);
+    var manager = services.GetRequiredService(managerType);
+    var store = (HubConnectionStore)manager.GetType().GetField("_connections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
     var rows = new List<object>();
     foreach (var pair in circuits)
     {
@@ -44,7 +66,12 @@ app.MapGet("/lab/state", (IServiceProvider services) =>
             hashes.Add(RuntimeHelpers.GetHashCode(buffer));
             sizes.Add(buffer.Length);
         }
-        rows.Add(new { connectionId, ids, hashes, sizes });
+        var hubConnection = store[connectionId]!;
+        var writeLock = (SemaphoreSlim)typeof(HubConnectionContext).GetField("_writeLock", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(hubConnection)!;
+        var scoped = (IServiceProvider)host.GetType().GetProperty("Services", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.GetValue(host)!;
+        var authProvider = scoped.GetService<AuthenticationStateProvider>();
+        var userAuthenticated = authProvider?.GetAuthenticationStateAsync().GetAwaiter().GetResult().User.Identity?.IsAuthenticated ?? false;
+        rows.Add(new { connectionId, ids, hashes, sizes, lockHeld = writeLock.CurrentCount == 0, userAuthenticated });
     }
     return Results.Ok(rows);
 });

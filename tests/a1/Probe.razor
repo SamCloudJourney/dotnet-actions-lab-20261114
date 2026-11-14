@@ -2,9 +2,20 @@
 @rendermode InteractiveServer
 @implements IDisposable
 @inject LabCoordinator Lab
+@using Microsoft.AspNetCore.Components.Authorization
 
 <h3>Render pool lab</h3>
-<p>@Marker</p>
+@if (Role == "victim-auth")
+{
+    <AuthorizeView>
+        <Authorized><p>@Marker</p></Authorized>
+        <NotAuthorized><p>DENIED</p></NotAuthorized>
+    </AuthorizeView>
+}
+else
+{
+    <p>@Marker</p>
+}
 <p>@Payload</p>
 
 @code {
