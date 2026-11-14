@@ -10,7 +10,7 @@ Note "OS=$([System.Environment]::OSVersion.VersionString)"
 Note "USER=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Note "SDK=$(dotnet --version)"
 
-$features = @('Web-Server', 'Web-Url-Auth', 'Web-IP-Security', 'Web-Mgmt-Tools', 'Web-Scripting-Tools')
+$features = @('Web-Server', 'Web-Url-Auth', 'Web-IP-Security', 'Web-Windows-Auth', 'Web-Mgmt-Tools', 'Web-Scripting-Tools')
 $install = Install-WindowsFeature -Name $features -IncludeManagementTools
 Note "IIS_FEATURES_SUCCESS=$($install.Success) RESTART_NEEDED=$($install.RestartNeeded)"
 Require $install.Success 'IIS feature installation failed'
@@ -67,8 +67,11 @@ app.MapPost("/Admin/Delete", (HttpContext context) =>
 app.MapGet("/State", () => Results.Text($"WRITES={Volatile.Read(ref LabState.Writes)}"));
 app.Run();
 
-static string Describe(HttpContext context, string marker) =>
-    $"MARKER={marker};PATH={context.Request.Path};RAW={context.Features.Get<IHttpRequestFeature>()?.RawTarget};PROCESS={Process.GetCurrentProcess().ProcessName};FRAMEWORK={RuntimeInformation.FrameworkDescription}";
+static string Describe(HttpContext context, string marker)
+{
+    var isAdmin = context.User.IsInRole(@"BUILTIN\Administrators");
+    return $"MARKER={marker};PATH={context.Request.Path};RAW={context.Features.Get<IHttpRequestFeature>()?.RawTarget};PROCESS={Process.GetCurrentProcess().ProcessName};FRAMEWORK={RuntimeInformation.FrameworkDescription};AUTH={context.User.Identity?.IsAuthenticated};NAME={context.User.Identity?.Name};ADMIN={isAdmin}";
+}
 
 static class LabState
 {
@@ -256,4 +259,69 @@ Require $tenDirectWriteBlocked '.NET 10.0.15 direct write was not blocked'
 Require $tenBypass '.NET 10.0.15 crafted route bypass failed'
 Require $tenStatic '.NET 10.0.15 static file bypass failed'
 Require $tenEffect '.NET 10.0.15 protected write bypass failed'
+Note 'LAB04_10_0_15_PASS'
+
+$authPublish = Join-Path $env:RUNNER_TEMP 'hunt04-auth-publish'
+New-Item -ItemType Directory -Path $authPublish -Force | Out-Null
+Copy-Item -Path (Join-Path $publish '*') -Destination $authPublish -Recurse -Force
+$roleLocation = @'
+  <location path="Admin">
+    <system.webServer>
+      <security>
+        <authorization>
+          <clear />
+          <add accessType="Allow" roles="BUILTIN\Administrators" />
+        </authorization>
+      </security>
+    </system.webServer>
+  </location>
+'@
+$authConfig = $ipConfig.Replace('</configuration>', $roleLocation + "`r`n</configuration>")
+Set-Content -Path (Join-Path $authPublish 'web.config') -Encoding utf8 -Value $authConfig
+New-WebAppPool -Name 'Hunt04AuthPool' | Out-Null
+Set-ItemProperty 'IIS:\AppPools\Hunt04AuthPool' -Name managedRuntimeVersion -Value ''
+New-Website -Name 'Hunt04AuthLab' -Port 5089 -IPAddress '127.0.0.1' -PhysicalPath $authPublish -ApplicationPool 'Hunt04AuthPool' | Out-Null
+& $appcmd set config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/anonymousAuthentication '/enabled:false' '/commit:apphost'
+Require ($LASTEXITCODE -eq 0) 'Could not disable anonymous auth under Admin'
+& $appcmd set config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/windowsAuthentication '/enabled:true' '/commit:apphost'
+Require ($LASTEXITCODE -eq 0) 'Could not enable Windows auth under Admin'
+Note 'IIS_WINDOWS_AUTH_CONFIG_START'
+& $appcmd list config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/anonymousAuthentication
+& $appcmd list config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/windowsAuthentication
+& $appcmd list config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authorization
+Require ($LASTEXITCODE -eq 0) 'IIS did not load the Admin role authorization config'
+Note 'IIS_WINDOWS_AUTH_CONFIG_END'
+
+$authPublic = Send-Raw 'GET' '/Delete' 5089
+$authDirect = Send-Raw 'GET' '/Admin/Delete' 5089
+$authStaticDirect = Send-Raw 'GET' '/Admin/secret.txt' 5089
+$authStateBefore = Send-Raw 'GET' '/State' 5089
+$authPostDirect = Send-Raw 'POST' '/Admin/Delete' 5089
+$authStateAfterDirect = Send-Raw 'GET' '/State' 5089
+$validAdmin = $false
+try {
+    $adminResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:5089/Admin/Delete' -UseDefaultCredentials -UseBasicParsing -TimeoutSec 20
+    Note "AUTHENTICATED_ADMIN status=$([int]$adminResponse.StatusCode) body=$($adminResponse.Content)"
+    $validAdmin = $adminResponse.StatusCode -eq 200 -and $adminResponse.Content.Contains('MARKER=PROTECTED_READ') -and $adminResponse.Content.Contains('AUTH=True')
+} catch {
+    Note "AUTHENTICATED_ADMIN_ERROR=$($_.Exception.Message)"
+}
+$authCrafted = Send-Raw 'GET' '/Admin//../Delete' 5089
+$authStaticCrafted = Send-Raw 'GET' '/Admin//../secret.txt' 5089
+$authPostCrafted = Send-Raw 'POST' '/Admin//../Delete' 5089
+$authStateAfterCrafted = Send-Raw 'GET' '/State' 5089
+$authBaseline = $authPublic.Status -eq 200 -and $authPublic.Text.Contains('MARKER=PUBLIC') -and $authPublic.Text.Contains('PROCESS=w3wp')
+$authGuard = $authDirect.Status -eq 401 -and $authStaticDirect.Status -eq 401 -and $authPostDirect.Status -eq 401
+$authDirectWriteBlocked = $authStateBefore.Text.Contains('WRITES=0') -and $authStateAfterDirect.Text.Contains('WRITES=0')
+$authBypass = $authCrafted.Status -eq 200 -and $authCrafted.Text.Contains('MARKER=PROTECTED_READ;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $authCrafted.Text.Contains('AUTH=False')
+$authStatic = $authStaticCrafted.Status -eq 200 -and $authStaticCrafted.Text.Contains('STATIC_PROTECTED_CONTENT_04')
+$authEffect = $authPostCrafted.Status -eq 200 -and $authPostCrafted.Text.Contains('MARKER=PROTECTED_WRITE;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $authPostCrafted.Text.Contains('AUTH=False') -and $authStateAfterCrafted.Text.Contains('WRITES=1')
+Note "AUTH_BASELINE=$authBaseline AUTH_GUARD=$authGuard AUTH_DIRECT_WRITE_BLOCKED=$authDirectWriteBlocked AUTH_ADMIN_POSITIVE=$validAdmin AUTH_BYPASS=$authBypass AUTH_STATIC=$authStatic AUTH_EFFECT=$authEffect"
+Require $authBaseline 'Windows auth public baseline failed'
+Require $authGuard 'Windows auth / admin role did not deny unauthenticated direct paths'
+Require $authDirectWriteBlocked 'Unauthenticated direct POST changed admin state'
+Require $validAdmin 'Valid local administrator could not reach the protected route'
+Require $authBypass 'Unauthenticated crafted path did not reach admin route'
+Require $authStatic 'Unauthenticated crafted path did not disclose admin static file'
+Require $authEffect 'Unauthenticated crafted path did not change admin state'
 Note 'LAB04_FULL_CHAIN_PASS'
