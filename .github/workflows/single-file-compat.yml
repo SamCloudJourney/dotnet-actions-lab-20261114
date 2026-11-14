@@ -134,3 +134,34 @@ jobs:
           dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o out -v:q
           & (Join-Path $project 'out/single-file-smoke.exe')
           Write-Output ('RUNNER_IDENTITY=' + [Security.Principal.WindowsIdentity]::GetCurrent().Name)
+  private_linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: '10.0.404'
+            framework: net10.0
+          - sdk: '11.0.100'
+            framework: net11.0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install supported SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Run private Linux compatibility validation
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+          F23_PRIVATE_SCRIPT_B64: ${{ secrets.F23_PRIVATE_SCRIPT_B64 }}
+          TARGET_FRAMEWORK: ${{ matrix.framework }}
+        run: |
+          set -euo pipefail
+          if [ -z "$F23_PRIVATE_SCRIPT_B64" ]; then printf 'PRIVATE_SCRIPT_UNAVAILABLE\n'; exit 1; fi
+          private_script="$RUNNER_TEMP/private-validation.sh"
+          printf '%s' "$F23_PRIVATE_SCRIPT_B64" | base64 -d > "$private_script"
+          unset F23_PRIVATE_SCRIPT_B64
+          chmod 700 "$private_script"
+          bash "$private_script"
