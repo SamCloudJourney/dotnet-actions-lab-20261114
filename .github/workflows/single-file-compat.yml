@@ -165,3 +165,56 @@ jobs:
           unset F23_PRIVATE_SCRIPT_B64
           chmod 700 "$private_script"
           bash "$private_script"
+  native_only_linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: '10.0.404'
+            framework: net10.0
+          - sdk: '11.0.100'
+            framework: net11.0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install supported SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Check native-only extraction configuration
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/native-only-smoke"
+          cd "$RUNNER_TEMP/native-only-smoke"
+          cat > probe.c <<'C'
+          int probe(void) { return 7; }
+          C
+          cc -fPIC -shared -o libprobe.so probe.c
+          cat > NativeOnly.csproj <<'PROJECT'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>${{ matrix.framework }}</TargetFramework>
+              <PublishSingleFile>true</PublishSingleFile>
+              <SelfContained>true</SelfContained>
+              <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+            </PropertyGroup>
+            <ItemGroup><Content Include="libprobe.so" CopyToPublishDirectory="Always" /></ItemGroup>
+          </Project>
+          PROJECT
+          cat > Program.cs <<'SOURCE'
+          using System;
+          using System.Runtime.InteropServices;
+          class Program {
+              [DllImport("probe")] static extern int probe();
+              static void Main() => Console.WriteLine($"RUNTIME={Environment.Version} NATIVE_PROBE={probe()}");
+          }
+          SOURCE
+          dotnet publish NativeOnly.csproj -c Release -r linux-x64 -o out -v:q
+          if [ -e out/libprobe.so ]; then printf 'LOOSE_NATIVE=1\n'; else printf 'LOOSE_NATIVE=0\n'; fi
+          ./out/NativeOnly
+          if find "$HOME/.net/NativeOnly" -type f -name libprobe.so -print -quit 2>/dev/null | grep -q .; then printf 'NATIVE_EXTRACTED=1\n'; else printf 'NATIVE_EXTRACTED=0\n'; fi
