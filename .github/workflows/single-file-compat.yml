@@ -38,6 +38,7 @@ jobs:
               <PublishSingleFile>true</PublishSingleFile>
               <SelfContained>true</SelfContained>
               <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+              <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
             </PropertyGroup>
           </Project>
           PROJECT
@@ -53,6 +54,7 @@ jobs:
           SOURCE
           dotnet publish Smoke.csproj -c Release -r linux-x64 -o out -v:q
           ./out/Smoke
+          if [ -d "$HOME/.net/Smoke" ]; then printf 'EXTRACTION_DIR_PRESENT=1\n'; else printf 'EXTRACTION_DIR_PRESENT=0\n'; fi
           cp out/Smoke RootOwned
           sudo chown root:root RootOwned
           sudo chmod 4755 RootOwned
@@ -85,6 +87,6 @@ jobs:
           New-Item -ItemType Directory -Path $project | Out-Null
           Set-Location $project
           dotnet new console --framework net10.0 --no-restore
-          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o out -v:q
+          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o out -v:q
           & (Join-Path $project 'out/single-file-smoke.exe')
           Write-Output ('RUNNER_IDENTITY=' + [Security.Principal.WindowsIdentity]::GetCurrent().Name)
