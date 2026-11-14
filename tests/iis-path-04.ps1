@@ -51,6 +51,7 @@ Set-Content -Path (Join-Path $source 'IisPathLab.csproj') -Encoding utf8 -Value 
 '@
 Set-Content -Path (Join-Path $source 'Program.cs') -Encoding utf8 -Value @'
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Http.Features;
 
 var app = WebApplication.Create(args);
@@ -67,7 +68,7 @@ app.MapGet("/State", () => Results.Text($"WRITES={Volatile.Read(ref LabState.Wri
 app.Run();
 
 static string Describe(HttpContext context, string marker) =>
-    $"MARKER={marker};PATH={context.Request.Path};RAW={context.Features.Get<IHttpRequestFeature>()?.RawTarget};PROCESS={Process.GetCurrentProcess().ProcessName}";
+    $"MARKER={marker};PATH={context.Request.Path};RAW={context.Features.Get<IHttpRequestFeature>()?.RawTarget};PROCESS={Process.GetCurrentProcess().ProcessName};FRAMEWORK={RuntimeInformation.FrameworkDescription}";
 
 static class LabState
 {
@@ -111,13 +112,13 @@ Require ($LASTEXITCODE -eq 0) 'IIS did not load the Admin authorization configur
 Note "IIS_AUTHZ_CONFIG_END"
 Note "SITE_BINDINGS=$((Get-WebBinding -Name 'Hunt04Lab' | ForEach-Object { $_.bindingInformation }) -join ',')"
 
-function Send-Raw([string]$verb, [string]$path) {
-    $client = [System.Net.Sockets.TcpClient]::new('127.0.0.1', 5087)
+function Send-Raw([string]$verb, [string]$path, [int]$port = 5087) {
+    $client = [System.Net.Sockets.TcpClient]::new('127.0.0.1', $port)
     try {
         $client.ReceiveTimeout = 20000
         $client.SendTimeout = 20000
         $stream = $client.GetStream()
-        $request = "$verb $path HTTP/1.1`r`nHost: 127.0.0.1:5087`r`nConnection: close`r`nContent-Length: 0`r`n`r`n"
+        $request = "$verb $path HTTP/1.1`r`nHost: 127.0.0.1:$port`r`nConnection: close`r`nContent-Length: 0`r`n`r`n"
         $bytes = [System.Text.Encoding]::ASCII.GetBytes($request)
         $stream.Write($bytes, 0, $bytes.Length)
         $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8)
@@ -127,7 +128,7 @@ function Send-Raw([string]$verb, [string]$path) {
         $status = [int]$match.Groups[1].Value
         $sample = $response.Replace("`r", '').Replace("`n", '|')
         if ($sample.Length -gt 900) { $sample = $sample.Substring(0, 900) }
-        Note "RESPONSE verb=$verb path=$path status=$status raw=$sample"
+        Note "RESPONSE port=$port verb=$verb path=$path status=$status raw=$sample"
         return [pscustomobject]@{ Status = $status; Text = $response }
     }
     finally { $client.Dispose() }
@@ -202,4 +203,57 @@ Require $outprocStaticSafe 'Crafted path disclosed static file out-of-process'
 Require $ipBaseline 'In-process baseline failed under IP restrictions'
 Require $ipGuard 'Scoped IP restriction did not deny direct Admin path'
 Require $ipBypass 'Crafted path did not bypass the scoped IP restriction'
+Note 'LAB04_11_0_0_PASS'
+
+$tenRuntimeUrl = 'https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.15/aspnetcore-runtime-10.0.15-win-x64.exe'
+$tenRuntimeHash = '716a82305a97b74fed21a982af4ca0f6d2c68489b6bfd1a88d565f8dbc73591873eb6c9e5289af6686e1b0a8090501ee920bb65e83dd506ff71f6ad932edc8d1'
+$tenRuntimeInstaller = Join-Path $env:RUNNER_TEMP 'aspnetcore-runtime-10.0.15-win-x64.exe'
+Invoke-WebRequest -Uri $tenRuntimeUrl -OutFile $tenRuntimeInstaller -UseBasicParsing
+$tenActualHash = (Get-FileHash -Path $tenRuntimeInstaller -Algorithm SHA512).Hash.ToLowerInvariant()
+Require ($tenActualHash -eq $tenRuntimeHash) '10.0.15 ASP.NET Core runtime hash mismatch'
+$tenInstall = Start-Process -FilePath $tenRuntimeInstaller -ArgumentList @('/install', '/quiet', '/norestart') -PassThru -Wait
+Note "TEN_RUNTIME_INSTALL_EXIT=$($tenInstall.ExitCode)"
+Require ($tenInstall.ExitCode -eq 0) '10.0.15 ASP.NET Core runtime installation failed'
+$runtimeList = (dotnet --list-runtimes) -join "`n"
+Require ($runtimeList -match 'Microsoft\.AspNetCore\.App 10\.0\.15') '10.0.15 ASP.NET Core runtime is absent'
+
+$tenSource = Join-Path $env:RUNNER_TEMP 'hunt04-source10'
+$tenPublish = Join-Path $env:RUNNER_TEMP 'hunt04-publish10'
+New-Item -ItemType Directory -Path $tenSource -Force | Out-Null
+Copy-Item (Join-Path $source 'Program.cs') (Join-Path $tenSource 'Program.cs')
+Copy-Item (Join-Path $source 'wwwroot') (Join-Path $tenSource 'wwwroot') -Recurse
+$tenProject = (Get-Content (Join-Path $source 'IisPathLab.csproj') -Raw).Replace('net11.0', 'net10.0')
+Set-Content -Path (Join-Path $tenSource 'IisPathLab.csproj') -Encoding utf8 -Value $tenProject
+dotnet publish (Join-Path $tenSource 'IisPathLab.csproj') -c Release -o $tenPublish --nologo
+Require ($LASTEXITCODE -eq 0) '10.0.15 app publish failed'
+Set-Content -Path (Join-Path $tenPublish 'web.config') -Encoding utf8 -Value $ipConfig
+
+New-WebAppPool -Name 'Hunt04TenPool' | Out-Null
+Set-ItemProperty 'IIS:\AppPools\Hunt04TenPool' -Name managedRuntimeVersion -Value ''
+New-Website -Name 'Hunt04TenLab' -Port 5088 -IPAddress '127.0.0.1' -PhysicalPath $tenPublish -ApplicationPool 'Hunt04TenPool' | Out-Null
+& $appcmd set config 'Hunt04TenLab/Admin' -section:system.webServer/security/ipSecurity '/allowUnlisted:false' '/denyAction:Forbidden' '/commit:apphost'
+Require ($LASTEXITCODE -eq 0) 'Could not configure .NET 10 scoped IP restriction'
+$tenPublic = Send-Raw 'GET' '/Delete' 5088
+$tenDirect = Send-Raw 'GET' '/Admin/Delete' 5088
+$tenStaticDirect = Send-Raw 'GET' '/Admin/secret.txt' 5088
+$tenStateBefore = Send-Raw 'GET' '/State' 5088
+$tenPostDirect = Send-Raw 'POST' '/Admin/Delete' 5088
+$tenStateAfterDirect = Send-Raw 'GET' '/State' 5088
+$tenCrafted = Send-Raw 'GET' '/Admin//../Delete' 5088
+$tenStaticCrafted = Send-Raw 'GET' '/Admin//../secret.txt' 5088
+$tenPostCrafted = Send-Raw 'POST' '/Admin//../Delete' 5088
+$tenStateAfterCrafted = Send-Raw 'GET' '/State' 5088
+$tenBaseline = $tenPublic.Status -eq 200 -and $tenPublic.Text.Contains('MARKER=PUBLIC') -and $tenPublic.Text.Contains('PROCESS=w3wp;FRAMEWORK=.NET 10.0.15')
+$tenGuard = $tenDirect.Status -eq 403 -and $tenStaticDirect.Status -eq 403 -and $tenPostDirect.Status -eq 403
+$tenDirectWriteBlocked = $tenStateBefore.Text.Contains('WRITES=0') -and $tenStateAfterDirect.Text.Contains('WRITES=0')
+$tenBypass = $tenCrafted.Status -eq 200 -and $tenCrafted.Text.Contains('MARKER=PROTECTED_READ;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp;FRAMEWORK=.NET 10.0.15')
+$tenStatic = $tenStaticCrafted.Status -eq 200 -and $tenStaticCrafted.Text.Contains('STATIC_PROTECTED_CONTENT_04')
+$tenEffect = $tenPostCrafted.Status -eq 200 -and $tenPostCrafted.Text.Contains('MARKER=PROTECTED_WRITE;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp;FRAMEWORK=.NET 10.0.15') -and $tenStateAfterCrafted.Text.Contains('WRITES=1')
+Note "TEN_BASELINE=$tenBaseline TEN_GUARD=$tenGuard TEN_DIRECT_WRITE_BLOCKED=$tenDirectWriteBlocked TEN_BYPASS=$tenBypass TEN_STATIC=$tenStatic TEN_EFFECT=$tenEffect"
+Require $tenBaseline '.NET 10.0.15 in-process baseline failed'
+Require $tenGuard '.NET 10.0.15 direct IP guard failed'
+Require $tenDirectWriteBlocked '.NET 10.0.15 direct write was not blocked'
+Require $tenBypass '.NET 10.0.15 crafted route bypass failed'
+Require $tenStatic '.NET 10.0.15 static file bypass failed'
+Require $tenEffect '.NET 10.0.15 protected write bypass failed'
 Note 'LAB04_FULL_CHAIN_PASS'
