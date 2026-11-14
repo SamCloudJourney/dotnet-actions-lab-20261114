@@ -4,9 +4,15 @@ set -euo pipefail
 
 framework=${1:?net10.0 or net11.0 required}
 expected_runtime=${2:?runtime version required}
+mode=${3:-http1}
 case "$framework:$expected_runtime" in
   net10.0:10.0.15|net11.0:11.0.0) ;;
   *) echo 'Unexpected framework/runtime pair' >&2; exit 2 ;;
+esac
+case "$mode" in
+  http1) curl_protocol=--http1.1; kestrel_protocols=Http1 ;;
+  http2) curl_protocol=--http2; kestrel_protocols=Http1AndHttp2 ;;
+  *) echo 'Unexpected HTTP mode' >&2; exit 2 ;;
 esac
 
 dotnet --list-runtimes
@@ -54,13 +60,13 @@ app.MapGet("/strict", (HttpContext context) =>
     .RequireHost("admin.test");
 app.Run();
 CS
-cat > appsettings.json <<'JSON'
+cat > appsettings.json <<JSON
 {
   "Kestrel": {
     "Endpoints": {
       "Https": {
         "Url": "https://127.0.0.1:46023",
-        "Protocols": "Http1",
+        "Protocols": "$kestrel_protocols",
         "ClientCertificateMode": "NoCertificate",
         "Certificate": { "Path": "server.crt", "KeyPath": "server.key" },
         "Sni": {
@@ -90,9 +96,9 @@ grep -q 'Now listening on: https://127.0.0.1:46023' app.log
 
 request() {
   local name=$1 sni=$2 host=$3 path=$4 with_cert=$5
-  local -a args=(--http1.1 --noproxy '*' --max-time 6 --silent --show-error
+  local -a args=("$curl_protocol" --noproxy '*' --max-time 6 --silent --show-error
     --cacert server.crt --resolve "$sni:46023:127.0.0.1" -H "Host: $host:46023"
-    -o "$name.body" -w '%{http_code}' "https://$sni:46023/$path")
+    -D "$name.headers" -o "$name.body" -w '%{http_code}' "https://$sni:46023/$path")
   if [[ "$with_cert" == yes ]]; then args=(--cert client.crt --key client.key "${args[@]}"); fi
   local rc=0
   curl "${args[@]}" > "$name.status" 2> "$name.err" || rc=$?
@@ -110,11 +116,16 @@ request strict_mismatch public.test admin.test strict no
 [[ $(cat mismatch.status) == 200 ]]
 [[ $(cat public_host.status) == 404 ]]
 [[ $(cat strict_mismatch.status) == 401 ]]
+if [[ "$mode" == http2 ]]; then
+  grep -q '^HTTP/2 ' allowed.headers
+  grep -q '^HTTP/2 ' mismatch.headers
+  grep -q '^HTTP/2 ' strict_mismatch.headers
+fi
 python3 - <<'PY'
 import json
 allowed=json.load(open('allowed.body'))
 mismatch=json.load(open('mismatch.body'))
 assert allowed == {'sni':'admin.test','host':'admin.test','clientCertificate':True}, allowed
 assert mismatch == {'sni':'public.test','host':'admin.test','clientCertificate':False}, mismatch
-print('PUBLIC_SMOKE_PASS')
 PY
+echo "PUBLIC_SMOKE_PASS $mode"
