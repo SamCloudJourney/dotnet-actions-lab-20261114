@@ -37,12 +37,38 @@ cat > Lab.csproj <<XML
 XML
 cat > Program.cs <<'CS'
 using Microsoft.AspNetCore.Connections.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
+using System.Net;
+using System.Net.Security;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.ConfigureKestrel(options => options.ConfigureHttpsDefaults(https =>
+builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 46023, listen =>
 {
-    https.ClientCertificateValidation = (certificate, _, _) => certificate.Subject == "CN=lab-client";
+    listen.Protocols = HttpProtocols.Http3;
+    listen.UseHttps(new TlsHandshakeCallbackOptions
+    {
+        OnConnection = context =>
+        {
+            var sni = context.ClientHelloInfo.ServerName;
+            var requireCertificate = sni is "admin.test" or "inherit.test";
+            Console.WriteLine($"LAB_SNI={sni} REQUIRE_CLIENT_CERT={requireCertificate}");
+            if (sni is not ("public.test" or "admin.test" or "inherit.test"))
+            {
+                throw new AuthenticationException("Unknown lab SNI");
+            }
+            return ValueTask.FromResult(new SslServerAuthenticationOptions
+            {
+                ServerCertificate = X509Certificate2.CreateFromPemFile("server.crt", "server.key"),
+                ApplicationProtocols = new List<SslApplicationProtocol> { SslApplicationProtocol.Http3 },
+                ClientCertificateRequired = requireCertificate,
+                RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+                    certificate?.Subject == "CN=lab-client"
+            });
+        }
+    });
 }));
 var app = builder.Build();
 app.MapGet("/probe", (HttpContext context) => Results.Json(new
@@ -58,25 +84,7 @@ app.MapGet("/strict", (HttpContext context) =>
     .RequireHost("admin.test");
 app.Run();
 CS
-cat > appsettings.json <<'JSON'
-{
-  "Kestrel": {
-    "Endpoints": {
-      "Https": {
-        "Url": "https://127.0.0.1:46023",
-        "Protocols": "Http3",
-        "ClientCertificateMode": "RequireCertificate",
-        "Certificate": { "Path": "server.crt", "KeyPath": "server.key" },
-        "Sni": {
-          "public.test": { "ClientCertificateMode": "NoCertificate" },
-          "admin.test": { "ClientCertificateMode": "RequireCertificate" },
-          "inherit.test": { "Protocols": "Http3" }
-        }
-      }
-    }
-  }
-}
-JSON
+printf '{"AllowedHosts":"*"}\n' > appsettings.json
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=public.test' \
   -addext 'subjectAltName=DNS:public.test,DNS:admin.test,DNS:inherit.test' \
   -addext 'extendedKeyUsage=serverAuth' -keyout server.key -out server.crt >/dev/null 2>&1
