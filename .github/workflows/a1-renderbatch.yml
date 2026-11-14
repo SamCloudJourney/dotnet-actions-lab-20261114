@@ -21,7 +21,7 @@ jobs:
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 11.0.100
-      - name: Run control and two clean attack trials
+      - name: Run clean controls and attack trials
         shell: bash
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -44,6 +44,7 @@ jobs:
           run_round() {
             local label="$1"
             local mode="$2"
+            local script="$3"
             ASPNETCORE_URLS=http://127.0.0.1:5019 ASPNETCORE_ENVIRONMENT=Development dotnet "$RUNNER_TEMP/a1-webapp/bin/Debug/net11.0/webapp.dll" > "$RUNNER_TEMP/$label.server.log" 2>&1 &
             app_pid=$!
             local ready=0
@@ -53,11 +54,14 @@ jobs:
             done
             if [[ "$ready" -ne 1 ]]; then cat "$RUNNER_TEMP/$label.server.log"; return 1; fi
             echo "=== $label ==="
-            PYTHONPATH="$RUNNER_TEMP/a1py" python3 tests/a1/network_full.py "$mode"
+            PYTHONPATH="$RUNNER_TEMP/a1py" python3 "tests/a1/$script" "$mode"
             kill "$app_pid"
             wait "$app_pid" 2>/dev/null || true
             app_pid=''
           }
-          run_round control control
-          run_round attack_clean1 attack
-          run_round attack_clean2 attack
+          run_round disclosure_control control network_full.py
+          run_round disclosure_attack1 attack network_full.py
+          run_round disclosure_attack2 attack network_full.py
+          run_round secret_control control network_secret.py
+          run_round secret_attack1 attack network_secret.py
+          run_round secret_attack2 attack network_secret.py

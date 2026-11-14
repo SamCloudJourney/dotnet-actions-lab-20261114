@@ -1,13 +1,15 @@
 # A1: Blazor Server render-batch pool lifetime lab
 
-This lab uses synthetic per-circuit markers and the shipped ASP.NET Core 11.0.0 assemblies. It runs two real BlazorPack WebSocket circuits against a generated Blazor Web App.
+Two BlazorPack clients run against the shipped ASP.NET Core 11.0.0 assemblies with synthetic circuit data.
 
-The attacker client receives its initial batch, acknowledges it, then stops reading while its component produces one 8 MB batch and nine 1.5 MB batches. It sends an ACK for the newest batch before receiving those pending batches. A separate victim circuit then renders eight 1.5 MB batches with a different random marker. The attacker resumes reading and checks whether any delayed render batch contains the victim marker.
+The attacker receives and acknowledges its initial batch, then stops reading. Its component produces one 8 MB batch to hold the connection write lock and nine more pending batches. An early ACK for the newest batch returns all pending pooled arrays before SignalR serializes them.
 
-The control run keeps the same schedule but skips the early ACK. It must have no shared buffer identities and no foreign marker on the attacker wire. Two independent attack runs each start a fresh server process.
+The information-disclosure test uses nine 1.5 MB pending batches, triggers eight independent victim renders, and checks whether the attacker wire contains the victim circuit's random marker. The control skips the early ACK. Both attack and control start from fresh server processes.
 
-The /lab/state endpoint only reports pending batch IDs, buffer sizes, and managed object identity hashes for evidence. The /lab/trigger-victim endpoint schedules the independent victim render. Neither endpoint changes the framework's ACK, pool, SignalR serialization, or transport decisions. The attacker's WebSocket uses only normal hub messages.
+The circuit-takeover test uses nine 4 KB pending arrays. The victim then starts a new circuit. SignalR's MessagePack writer rents from the same shared ArrayPool and returns its 4 KB arrays uncleared. The test checks whether the attacker wire contains the exact StartCircuit bearer secret, extracts those bytes from the attacker wire, and calls ConnectCircuit on a new connection. An invalid secret must be denied; the leaked secret must connect and receive the victim's pending render. The control skips the early ACK and must see no secret.
 
-The proof establishes a cross-circuit information disclosure in this isolated application. It does not establish a circuit-secret leak, circuit takeover, code execution, or Critical severity.
+The /lab/state endpoint reports pending IDs, sizes, and managed object identity hashes. The /lab/trigger-victim endpoint schedules independent victim activity. Neither endpoint implements a disputed framework security decision. The attacker WebSocket sends standard hub messages. Logs contain only hashes and booleans, never raw circuit secrets.
+
+This proof establishes cross-circuit disclosure and bearer-secret circuit takeover in this isolated application. It does not yet establish authenticated victim impersonation, code execution, stock-template reachability, or Critical severity.
 
 Run the workflow on branch a1-renderbatch-pool-20261114. Requirements: .NET SDK 11.0.100, Python 3, websocket-client==1.8.0, and msgpack==1.1.1.

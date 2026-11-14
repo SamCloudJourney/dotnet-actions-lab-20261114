@@ -20,7 +20,7 @@
 
     protected override Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && Role == "attacker")
+        if (firstRender && (Role == "attacker" || Role == "attacker-small"))
         {
             _ = Task.Run(async () =>
             {
@@ -31,7 +31,7 @@
                 await Task.Delay(900);
                 for (var i = 0; i < 9; i++)
                 {
-                    Payload = Marker + i.ToString("D2") + new string('P', 1_500_000);
+                    Payload = Marker + i.ToString("D2") + new string('P', Role == "attacker-small" ? 2_500 : 1_500_000);
                     await InvokeAsync(StateHasChanged);
                     await Task.Delay(60);
                 }
