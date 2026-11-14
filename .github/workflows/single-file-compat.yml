@@ -282,7 +282,7 @@ jobs:
               static void Main() => Console.WriteLine($"RUNTIME={Environment.Version} NATIVE_PROBE={probe()}");
           }
           SOURCE
-          dotnet restore NativeNuGet.csproj -r linux-x64 --source "$PWD/../pkgs" -v:q
+          dotnet restore NativeNuGet.csproj -r linux-x64 --source "$PWD/../pkgs" --source https://api.nuget.org/v3/index.json -v:q
           dotnet publish NativeNuGet.csproj -c Release -r linux-x64 --no-restore -o out -v:q
           if [ -e out/libprobe.so ]; then printf 'LOOSE_NATIVE=1\n'; else printf 'LOOSE_NATIVE=0\n'; fi
           ./out/NativeNuGet
