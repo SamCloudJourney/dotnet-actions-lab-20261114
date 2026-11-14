@@ -1,0 +1,55 @@
+@page "/probe/{Role}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject LabCoordinator Lab
+
+<h3>Render pool lab</h3>
+<p>@Marker</p>
+<p>@Payload</p>
+
+@code {
+    [Parameter] public string Role { get; set; } = "";
+    private string Marker = "CIRCUIT-" + Guid.NewGuid().ToString("N");
+    private string Payload = "idle";
+    private int VictimCount;
+
+    protected override void OnInitialized()
+    {
+        if (Role == "victim") Lab.VictimRender += OnVictimRender;
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && Role == "attacker")
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(400);
+                Payload = Marker + new string('H', 8_000_000);
+                await InvokeAsync(StateHasChanged);
+                Console.WriteLine("LAB_ATTACKER_HOLD_RENDER_QUEUED");
+                await Task.Delay(900);
+                for (var i = 0; i < 9; i++)
+                {
+                    Payload = Marker + i.ToString("D2") + new string('P', 1_500_000);
+                    await InvokeAsync(StateHasChanged);
+                    await Task.Delay(60);
+                }
+                Console.WriteLine("LAB_ATTACKER_PENDING_RENDERS_QUEUED");
+            });
+        }
+        return Task.CompletedTask;
+    }
+
+    private void OnVictimRender()
+    {
+        _ = InvokeAsync(() =>
+        {
+            Payload = Marker + (++VictimCount).ToString("D2") + new string('V', 1_500_000);
+            StateHasChanged();
+            Console.WriteLine("LAB_VICTIM_RENDER_QUEUED");
+        });
+    }
+
+    public void Dispose() => Lab.VictimRender -= OnVictimRender;
+}
