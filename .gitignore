@@ -1,0 +1,12 @@
+run-out/
+artifacts/
+evidence/
+private/
+*.log
+*.jsonl
+*.zip
+*.pfx
+*.pem
+.env
+.env.*
+!.env.example
