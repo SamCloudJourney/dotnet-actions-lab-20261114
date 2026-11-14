@@ -56,6 +56,7 @@ using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Http.Features;
 
 var app = WebApplication.Create(args);
+var statePath = Path.Combine(app.Environment.ContentRootPath, "state", "admin-action.txt");
 app.UseStaticFiles();
 
 app.MapGet("/Delete", (HttpContext context) => Results.Text(Describe(context, "PUBLIC")));
@@ -64,9 +65,13 @@ app.MapGet("/Admin/Delete", (HttpContext context) => Results.Text(Describe(conte
 app.MapPost("/Admin/Delete", (HttpContext context) =>
 {
     Interlocked.Increment(ref LabState.Writes);
+    if (Directory.Exists(Path.GetDirectoryName(statePath)))
+    {
+        File.WriteAllText(statePath, "ADMIN_ACTION_04");
+    }
     return Results.Text(Describe(context, "PROTECTED_WRITE"));
 });
-app.MapGet("/State", () => Results.Text($"WRITES={Volatile.Read(ref LabState.Writes)}"));
+app.MapGet("/State", () => Results.Text($"WRITES={Volatile.Read(ref LabState.Writes)};PERSISTED={(File.Exists(statePath) ? 1 : 0)}"));
 app.Run();
 
 static string Describe(HttpContext context, string marker)
@@ -282,6 +287,10 @@ $authConfig = $ipConfig.Replace('</configuration>', $roleLocation + "`r`n</confi
 Set-Content -Path (Join-Path $authPublish 'web.config') -Encoding utf8 -Value $authConfig
 New-WebAppPool -Name 'Hunt04AuthPool' | Out-Null
 Set-ItemProperty 'IIS:\AppPools\Hunt04AuthPool' -Name managedRuntimeVersion -Value ''
+$stateDir = Join-Path $authPublish 'state'
+New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+& icacls $stateDir /grant 'IIS AppPool\Hunt04AuthPool:(OI)(CI)M'
+Require ($LASTEXITCODE -eq 0) 'Could not grant auth app pool write access to state directory'
 New-Website -Name 'Hunt04AuthLab' -Port 5089 -IPAddress '127.0.0.1' -PhysicalPath $authPublish -ApplicationPool 'Hunt04AuthPool' | Out-Null
 & $appcmd set config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/anonymousAuthentication '/enabled:false' '/commit:apphost'
 Require ($LASTEXITCODE -eq 0) 'Could not disable anonymous auth under Admin'
@@ -343,13 +352,17 @@ $authCrafted = Send-Raw 'GET' '/Admin//../Delete' 5089
 $authStaticCrafted = Send-Raw 'GET' '/Admin//../secret.txt' 5089
 $authPostCrafted = Send-Raw 'POST' '/Admin//../Delete' 5089
 $authStateAfterCrafted = Send-Raw 'GET' '/State' 5089
+Restart-WebAppPool -Name 'Hunt04AuthPool'
+Start-Sleep -Seconds 3
+$authStateAfterRestart = Send-Raw 'GET' '/State' 5089
 $authBaseline = $authPublic.Status -eq 200 -and $authPublic.Text.Contains('MARKER=PUBLIC') -and $authPublic.Text.Contains('PROCESS=w3wp')
 $authGuard = $authDirect.Status -eq 401 -and $authStaticDirect.Status -eq 401 -and $authPostDirect.Status -eq 401 -and $authOnlyAnonymous.Status -eq 401
-$authDirectWriteBlocked = $authStateBefore.Text.Contains('WRITES=0') -and $authStateAfterDirect.Text.Contains('WRITES=0')
+$authDirectWriteBlocked = $authStateBefore.Text.Contains('WRITES=0;PERSISTED=0') -and $authStateAfterDirect.Text.Contains('WRITES=0;PERSISTED=0')
 $authBypass = $authCrafted.Status -eq 200 -and $authCrafted.Text.Contains('MARKER=PROTECTED_READ;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $authCrafted.Text.Contains('AUTH=False')
 $authStatic = $authStaticCrafted.Status -eq 200 -and $authStaticCrafted.Text.Contains('STATIC_PROTECTED_CONTENT_04')
-$authEffect = $authPostCrafted.Status -eq 200 -and $authPostCrafted.Text.Contains('MARKER=PROTECTED_WRITE;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $authPostCrafted.Text.Contains('AUTH=False') -and $authStateAfterCrafted.Text.Contains('WRITES=1')
-Note "AUTH_BASELINE=$authBaseline AUTH_GUARD=$authGuard AUTH_DIRECT_WRITE_BLOCKED=$authDirectWriteBlocked AUTH_ADMIN_POSITIVE=$validAdmin NONADMIN_AUTH_ONLY=$nonAdminAuthOnly NONADMIN_ROLE_DENIED=$nonAdminDenied AUTH_BYPASS=$authBypass AUTH_STATIC=$authStatic AUTH_EFFECT=$authEffect"
+$authEffect = $authPostCrafted.Status -eq 200 -and $authPostCrafted.Text.Contains('MARKER=PROTECTED_WRITE;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $authPostCrafted.Text.Contains('AUTH=False') -and $authStateAfterCrafted.Text.Contains('WRITES=1;PERSISTED=1')
+$authDurable = $authStateAfterRestart.Status -eq 200 -and $authStateAfterRestart.Text.Contains('WRITES=0;PERSISTED=1') -and (Get-Content (Join-Path $stateDir 'admin-action.txt') -Raw).Trim() -eq 'ADMIN_ACTION_04'
+Note "AUTH_BASELINE=$authBaseline AUTH_GUARD=$authGuard AUTH_DIRECT_WRITE_BLOCKED=$authDirectWriteBlocked AUTH_ADMIN_POSITIVE=$validAdmin NONADMIN_AUTH_ONLY=$nonAdminAuthOnly NONADMIN_ROLE_DENIED=$nonAdminDenied AUTH_BYPASS=$authBypass AUTH_STATIC=$authStatic AUTH_EFFECT=$authEffect AUTH_DURABLE=$authDurable"
 Require $authBaseline 'Windows auth public baseline failed'
 Require $authGuard 'Windows auth / admin role did not deny unauthenticated direct paths'
 Require $authDirectWriteBlocked 'Unauthenticated direct POST changed admin state'
@@ -359,4 +372,5 @@ Require $nonAdminDenied 'Valid non-admin Windows credential was not denied by th
 Require $authBypass 'Unauthenticated crafted path did not reach admin route'
 Require $authStatic 'Unauthenticated crafted path did not disclose admin static file'
 Require $authEffect 'Unauthenticated crafted path did not change admin state'
+Require $authDurable 'Unauthenticated admin write did not survive app pool recycle'
 Note 'LAB04_FULL_CHAIN_PASS'
