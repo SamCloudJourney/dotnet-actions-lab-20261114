@@ -19,7 +19,7 @@ Require ($install.RestartNeeded -ne 'Yes') 'IIS feature installation requires a 
 $bundleUrl = 'https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/11.0.0/dotnet-hosting-11.0.0-win.exe'
 $bundleHash = 'ecba8c627d389bc07e8d5900d217cf1a05a0d814c2f3bacf218a49a5dbd2ac1ac2d5907c1934f2e858c346a2c8b34bf0bb5e6ee70d38a004332746decab4eab1'
 $bundle = Join-Path $env:RUNNER_TEMP 'dotnet-hosting-11.0.0-win.exe'
-Invoke-WebRequest -Uri $bundleUrl -OutFile $bundle
+Invoke-WebRequest -Uri $bundleUrl -OutFile $bundle -UseBasicParsing
 $actualHash = (Get-FileHash -Path $bundle -Algorithm SHA512).Hash.ToLowerInvariant()
 Require ($actualHash -eq $bundleHash) '11.0.0 hosting bundle hash mismatch'
 $bundleInstall = Start-Process -FilePath $bundle -ArgumentList @('/install', '/quiet', '/norestart', 'OPT_NO_X86=1') -PassThru -Wait

@@ -22,7 +22,7 @@ jobs:
         with:
           dotnet-version: 11.0.100
       - name: Reproduce IIS path authorization
-        shell: pwsh
+        shell: powershell
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: '1'
           DOTNET_NOLOGO: '1'
