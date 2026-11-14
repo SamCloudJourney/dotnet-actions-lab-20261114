@@ -1,0 +1,35 @@
+name: C023 C037 public SNI Host smoke
+on:
+  push:
+    branches:
+      - c023-c037-public-smoke-20261114
+permissions:
+  contents: read
+jobs:
+  loopback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: '11.0.100'
+            framework: 'net11.0'
+            runtime: '11.0.0'
+          - sdk: '10.0.404'
+            framework: 'net10.0'
+            runtime: '10.0.15'
+    steps:
+      - name: Check out public lab
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Run owned loopback smoke
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: bash tests/c023-c037-public-smoke/run.sh '${{ matrix.framework }}' '${{ matrix.runtime }}'
