@@ -29,8 +29,9 @@ curl --fail --silent --show-error --location "$base/Startup.cs" -o Startup.cs
 [[ $(git hash-object Startup.cs) == e47087f67a4aa5415c315b3229c2515beb008c7d ]]
 echo 'SAMPLE_SOURCE_BLOBS_VERIFIED'
 
-# Substitute only test names and the machine-local certificate-store load.
-# The published TLS decision, authentication pipeline, and /auth endpoint remain intact.
+# Substitute test names and the machine-local certificate-store load. The
+# ephemeral CA has no CRL, so skip revocation checking for its positive control.
+# The published TLS decision, certificate presence check, and /auth guard remain intact.
 python3 - <<'PY'
 from pathlib import Path
 p = Path('Program.cs')
@@ -43,6 +44,12 @@ s = s.replace(old, 'var serverCertificate = X509Certificate2.CreateFromPemFile("
 for old, new in [('"127.0.0.1"', '"public.test"'), ('"127.0.0.2"', '"admin.test"')]:
     assert s.count(old) == 1
     s = s.replace(old, new)
+p.write_text(s)
+p = Path('Startup.cs')
+s = p.read_text()
+old = 'options.Events = new CertificateAuthenticationEvents()'
+assert s.count(old) == 1
+s = s.replace(old, 'options.RevocationMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;\n                ' + old)
 p.write_text(s)
 PY
 cat > Sample.csproj <<XML
