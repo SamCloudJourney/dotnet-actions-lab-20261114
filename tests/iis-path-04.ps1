@@ -373,4 +373,83 @@ Require $authBypass 'Unauthenticated crafted path did not reach admin route'
 Require $authStatic 'Unauthenticated crafted path did not disclose admin static file'
 Require $authEffect 'Unauthenticated crafted path did not change admin state'
 Require $authDurable 'Unauthenticated admin write did not survive app pool recycle'
+Note 'LAB04_11_ADMIN_DURABLE_PASS'
+
+$tenAuthPublish = Join-Path $env:RUNNER_TEMP 'hunt04-auth-publish10'
+New-Item -ItemType Directory -Path $tenAuthPublish -Force | Out-Null
+Copy-Item -Path (Join-Path $tenPublish '*') -Destination $tenAuthPublish -Recurse -Force
+Set-Content -Path (Join-Path $tenAuthPublish 'web.config') -Encoding utf8 -Value $authConfig
+New-WebAppPool -Name 'Hunt04TenAuthPool' | Out-Null
+Set-ItemProperty 'IIS:\AppPools\Hunt04TenAuthPool' -Name managedRuntimeVersion -Value ''
+$tenStateDir = Join-Path $tenAuthPublish 'state'
+New-Item -ItemType Directory -Path $tenStateDir -Force | Out-Null
+& icacls $tenStateDir /grant 'IIS AppPool\Hunt04TenAuthPool:(OI)(CI)M'
+Require ($LASTEXITCODE -eq 0) 'Could not grant .NET 10 auth app pool state access'
+New-Website -Name 'Hunt04TenAuthLab' -Port 5090 -IPAddress '127.0.0.1' -PhysicalPath $tenAuthPublish -ApplicationPool 'Hunt04TenAuthPool' | Out-Null
+foreach ($location in @('Admin', 'AuthOnly')) {
+    & $appcmd set config "Hunt04TenAuthLab/$location" -section:system.webServer/security/authentication/anonymousAuthentication '/enabled:false' '/commit:apphost'
+    Require ($LASTEXITCODE -eq 0) ".NET 10 $location anonymous auth config failed"
+    & $appcmd set config "Hunt04TenAuthLab/$location" -section:system.webServer/security/authentication/windowsAuthentication '/enabled:true' '/commit:apphost'
+    Require ($LASTEXITCODE -eq 0) ".NET 10 $location Windows auth config failed"
+}
+& $appcmd list config 'Hunt04TenAuthLab/Admin' -section:system.webServer/security/authorization
+Require ($LASTEXITCODE -eq 0) '.NET 10 admin role config missing'
+
+$tenAuthPublic = Send-Raw 'GET' '/Delete' 5090
+$tenAuthDirect = Send-Raw 'GET' '/Admin/Delete' 5090
+$tenAuthStaticDirect = Send-Raw 'GET' '/Admin/secret.txt' 5090
+$tenAuthStateBefore = Send-Raw 'GET' '/State' 5090
+$tenAuthPostDirect = Send-Raw 'POST' '/Admin/Delete' 5090
+$tenAuthStateAfterDirect = Send-Raw 'GET' '/State' 5090
+$tenAuthOnlyAnonymous = Send-Raw 'GET' '/AuthOnly/Proof' 5090
+$tenAdminPositive = $false
+try {
+    $tenAdminResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:5090/Admin/Delete' -UseDefaultCredentials -UseBasicParsing -TimeoutSec 20
+    Note "TEN_AUTHENTICATED_ADMIN status=$([int]$tenAdminResponse.StatusCode) body=$($tenAdminResponse.Content)"
+    $tenAdminPositive = $tenAdminResponse.StatusCode -eq 200 -and $tenAdminResponse.Content.Contains('MARKER=PROTECTED_READ')
+} catch {
+    Note "TEN_AUTHENTICATED_ADMIN_ERROR=$($_.Exception.Message)"
+}
+$tenNonAdminAuthOnly = $false
+try {
+    $tenNonAdminResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:5090/AuthOnly/Proof' -Credential $nonAdminCredential -UseBasicParsing -TimeoutSec 20
+    Note "TEN_NONADMIN_AUTH_ONLY status=$([int]$tenNonAdminResponse.StatusCode) body=$($tenNonAdminResponse.Content)"
+    $tenNonAdminAuthOnly = $tenNonAdminResponse.StatusCode -eq 200 -and $tenNonAdminResponse.Content.Contains('MARKER=AUTH_ONLY')
+} catch {
+    Note "TEN_NONADMIN_AUTH_ONLY_ERROR=$($_.Exception.Message)"
+}
+$tenNonAdminDenied = $false
+try {
+    $tenNonAdminAdminResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:5090/Admin/Delete' -Credential $nonAdminCredential -UseBasicParsing -TimeoutSec 20
+    Note "TEN_NONADMIN_ADMIN_UNEXPECTED status=$([int]$tenNonAdminAdminResponse.StatusCode) body=$($tenNonAdminAdminResponse.Content)"
+} catch {
+    $tenNonAdminStatus = [int]$_.Exception.Response.StatusCode
+    $tenNonAdminDenied = $tenNonAdminStatus -eq 401
+    Note "TEN_NONADMIN_ADMIN status=$tenNonAdminStatus role_denial=$tenNonAdminDenied"
+}
+$tenAuthCrafted = Send-Raw 'GET' '/Admin//../Delete' 5090
+$tenAuthStaticCrafted = Send-Raw 'GET' '/Admin//../secret.txt' 5090
+$tenAuthPostCrafted = Send-Raw 'POST' '/Admin//../Delete' 5090
+$tenAuthStateAfterCrafted = Send-Raw 'GET' '/State' 5090
+Restart-WebAppPool -Name 'Hunt04TenAuthPool'
+Start-Sleep -Seconds 3
+$tenAuthStateAfterRestart = Send-Raw 'GET' '/State' 5090
+$tenAuthBaseline = $tenAuthPublic.Status -eq 200 -and $tenAuthPublic.Text.Contains('PROCESS=w3wp;FRAMEWORK=.NET 10.0.15')
+$tenAuthGuard = $tenAuthDirect.Status -eq 401 -and $tenAuthStaticDirect.Status -eq 401 -and $tenAuthPostDirect.Status -eq 401 -and $tenAuthOnlyAnonymous.Status -eq 401
+$tenAuthDirectWriteBlocked = $tenAuthStateBefore.Text.Contains('WRITES=0;PERSISTED=0') -and $tenAuthStateAfterDirect.Text.Contains('WRITES=0;PERSISTED=0')
+$tenAuthBypass = $tenAuthCrafted.Status -eq 200 -and $tenAuthCrafted.Text.Contains('MARKER=PROTECTED_READ;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp;FRAMEWORK=.NET 10.0.15') -and $tenAuthCrafted.Text.Contains('AUTH=False')
+$tenAuthStatic = $tenAuthStaticCrafted.Status -eq 200 -and $tenAuthStaticCrafted.Text.Contains('STATIC_PROTECTED_CONTENT_04')
+$tenAuthEffect = $tenAuthPostCrafted.Status -eq 200 -and $tenAuthPostCrafted.Text.Contains('MARKER=PROTECTED_WRITE;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp;FRAMEWORK=.NET 10.0.15') -and $tenAuthPostCrafted.Text.Contains('AUTH=False') -and $tenAuthStateAfterCrafted.Text.Contains('WRITES=1;PERSISTED=1')
+$tenAuthDurable = $tenAuthStateAfterRestart.Status -eq 200 -and $tenAuthStateAfterRestart.Text.Contains('WRITES=0;PERSISTED=1') -and (Get-Content (Join-Path $tenStateDir 'admin-action.txt') -Raw).Trim() -eq 'ADMIN_ACTION_04'
+Note "TEN_AUTH_BASELINE=$tenAuthBaseline TEN_AUTH_GUARD=$tenAuthGuard TEN_AUTH_DIRECT_WRITE_BLOCKED=$tenAuthDirectWriteBlocked TEN_ADMIN_POSITIVE=$tenAdminPositive TEN_NONADMIN_AUTH_ONLY=$tenNonAdminAuthOnly TEN_NONADMIN_ROLE_DENIED=$tenNonAdminDenied TEN_AUTH_BYPASS=$tenAuthBypass TEN_AUTH_STATIC=$tenAuthStatic TEN_AUTH_EFFECT=$tenAuthEffect TEN_AUTH_DURABLE=$tenAuthDurable"
+Require $tenAuthBaseline '.NET 10 admin site did not use in-process hosting'
+Require $tenAuthGuard '.NET 10 admin site did not deny unauthenticated direct paths'
+Require $tenAuthDirectWriteBlocked '.NET 10 direct admin POST changed state'
+Require $tenAdminPositive '.NET 10 valid administrator could not reach Admin'
+Require $tenNonAdminAuthOnly '.NET 10 non-admin account could not authenticate to sibling route'
+Require $tenNonAdminDenied '.NET 10 valid non-admin account reached Admin'
+Require $tenAuthBypass '.NET 10 crafted anonymous request did not reach Admin route'
+Require $tenAuthStatic '.NET 10 crafted anonymous request did not reach Admin static file'
+Require $tenAuthEffect '.NET 10 crafted anonymous POST did not change Admin state'
+Require $tenAuthDurable '.NET 10 crafted anonymous write did not survive app pool recycle'
 Note 'LAB04_FULL_CHAIN_PASS'
