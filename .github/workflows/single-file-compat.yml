@@ -108,6 +108,10 @@ jobs:
           set -e
           printf 'NATIVE_APP_STATUS=%s\\n' "$native_status"
           cat native-result.txt
+          cp out/NativeSmoke NativeRootOwned
+          sudo chown root:root NativeRootOwned
+          sudo chmod 4755 NativeRootOwned
+          ./NativeRootOwned
   windows:
     runs-on: windows-2022
     timeout-minutes: 20
