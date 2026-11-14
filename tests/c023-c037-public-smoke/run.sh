@@ -67,11 +67,12 @@ cat > appsettings.json <<JSON
       "Https": {
         "Url": "https://127.0.0.1:46023",
         "Protocols": "$kestrel_protocols",
-        "ClientCertificateMode": "NoCertificate",
+        "ClientCertificateMode": "RequireCertificate",
         "Certificate": { "Path": "server.crt", "KeyPath": "server.key" },
         "Sni": {
           "public.test": { "ClientCertificateMode": "NoCertificate" },
-          "admin.test": { "ClientCertificateMode": "RequireCertificate" }
+          "admin.test": { "ClientCertificateMode": "RequireCertificate" },
+          "inherit.test": { "Protocols": "$kestrel_protocols" }
         }
       }
     }
@@ -79,7 +80,7 @@ cat > appsettings.json <<JSON
 }
 JSON
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=public.test' \
-  -addext 'subjectAltName=DNS:public.test,DNS:admin.test' \
+  -addext 'subjectAltName=DNS:public.test,DNS:admin.test,DNS:inherit.test' \
   -addext 'extendedKeyUsage=serverAuth' -keyout server.key -out server.crt >/dev/null 2>&1
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=lab-client' \
   -addext 'extendedKeyUsage=clientAuth' -keyout client.key -out client.crt >/dev/null 2>&1
@@ -110,22 +111,29 @@ request denied admin.test admin.test probe no
 request mismatch public.test admin.test probe no
 request public_host public.test public.test probe no
 request strict_mismatch public.test admin.test strict no
+request inherited_allowed inherit.test admin.test probe yes
+request inherited_denied inherit.test admin.test probe no
 
 [[ $(cat allowed.status) == 200 ]]
 [[ $(cat denied.status) != 200 ]]
 [[ $(cat mismatch.status) == 200 ]]
 [[ $(cat public_host.status) == 404 ]]
 [[ $(cat strict_mismatch.status) == 401 ]]
+[[ $(cat inherited_allowed.status) == 200 ]]
+[[ $(cat inherited_denied.status) == 000 ]]
 if [[ "$mode" == http2 ]]; then
   grep -q '^HTTP/2 ' allowed.headers
   grep -q '^HTTP/2 ' mismatch.headers
   grep -q '^HTTP/2 ' strict_mismatch.headers
+  grep -q '^HTTP/2 ' inherited_allowed.headers
 fi
 python3 - <<'PY'
 import json
 allowed=json.load(open('allowed.body'))
 mismatch=json.load(open('mismatch.body'))
+inherited=json.load(open('inherited_allowed.body'))
 assert allowed == {'sni':'admin.test','host':'admin.test','clientCertificate':True}, allowed
 assert mismatch == {'sni':'public.test','host':'admin.test','clientCertificate':False}, mismatch
+assert inherited == {'sni':'inherit.test','host':'admin.test','clientCertificate':True}, inherited
 PY
 echo "PUBLIC_SMOKE_PASS $mode"
