@@ -1,0 +1,90 @@
+name: Public .NET single-file compatibility
+on:
+  push:
+    branches:
+      - f23-public-baseline-20261114
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ['10.0.404', '11.0.100']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install supported SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Check single-file launch identities
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          set -euo pipefail
+          dotnet --version
+          mkdir -p "$RUNNER_TEMP/single-file-smoke"
+          cd "$RUNNER_TEMP/single-file-smoke"
+          cat > Smoke.csproj <<'PROJECT'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net${{ matrix.sdk == '11.0.100' && '11.0' || '10.0' }}</TargetFramework>
+              <PublishSingleFile>true</PublishSingleFile>
+              <SelfContained>true</SelfContained>
+              <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+            </PropertyGroup>
+          </Project>
+          PROJECT
+          cat > Program.cs <<'SOURCE'
+          using System;
+          using System.Runtime.InteropServices;
+          class Program
+          {
+              [DllImport("libc")] static extern uint getuid();
+              [DllImport("libc")] static extern uint geteuid();
+              static void Main() => Console.WriteLine($"REAL_UID={getuid()} EFFECTIVE_UID={geteuid()}");
+          }
+          SOURCE
+          dotnet publish Smoke.csproj -c Release -r linux-x64 -o out -v:q
+          ./out/Smoke
+          cp out/Smoke RootOwned
+          sudo chown root:root RootOwned
+          sudo chmod 4755 RootOwned
+          ./RootOwned
+          cp out/Smoke NobodyOwned
+          sudo chown nobody:nogroup NobodyOwned
+          sudo chmod 4755 NobodyOwned
+          set +e
+          ./NobodyOwned > nobody-result.txt 2>&1
+          status=$?
+          set -e
+          printf 'SETUID_NOBODY_STATUS=%s\n' "$status"
+          if [ "$status" -eq 0 ]; then cat nobody-result.txt; else printf 'Setuid non-root launch did not complete.\n'; fi
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Install supported SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.404'
+      - name: Check ordinary single-file launch
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          dotnet --version
+          $project = Join-Path $env:RUNNER_TEMP 'single-file-smoke'
+          New-Item -ItemType Directory -Path $project | Out-Null
+          Set-Location $project
+          dotnet new console --framework net10.0 --no-restore
+          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o out -v:q
+          & (Join-Path $project 'out/single-file-smoke.exe')
+          Write-Output ('RUNNER_IDENTITY=' + [Security.Principal.WindowsIdentity]::GetCurrent().Name)
