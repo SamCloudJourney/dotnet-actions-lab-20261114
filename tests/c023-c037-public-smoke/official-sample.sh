@@ -83,7 +83,7 @@ sudo update-ca-certificates >/dev/null 2>&1
 
 dotnet restore Sample.csproj --configfile NuGet.Config --ignore-failed-sources
 dotnet build Sample.csproj --no-restore -c Release
-dotnet run --project Sample.csproj --no-build --no-restore -c Release > sample.log 2>&1 &
+Logging__LogLevel__Microsoft.AspNetCore.Authentication=Debug dotnet run --project Sample.csproj --no-build --no-restore -c Release > sample.log 2>&1 &
 sample_pid=$!
 for _ in $(seq 1 80); do
   if grep -q 'Now listening on:' sample.log; then break; fi
@@ -107,6 +107,7 @@ request denied admin.test admin.test auth no
 request mismatch public.test admin.test auth no
 request public_auth public.test public.test auth no
 request public_open public.test public.test '' no
+if [[ $(cat allowed.status) != 200 ]]; then cat sample.log; fi
 [[ $(cat allowed.status) == 200 ]]
 grep -q 'Hello lab-client at admin.test:5001' allowed.body
 [[ $(cat denied.status) != 200 ]]
