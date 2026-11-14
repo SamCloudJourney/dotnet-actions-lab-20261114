@@ -68,3 +68,51 @@ jobs:
           run_round auth_control control network_auth.py
           run_round auth_attack1 attack network_auth.py
           run_round auth_attack2 attack network_auth.py
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.404
+      - name: Reproduce authenticated chain on ASP.NET Core 10.0.15
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a1-v10"
+          printf '{"sdk":{"version":"10.0.404"}}\n' > "$RUNNER_TEMP/a1-v10/global.json"
+          cd "$RUNNER_TEMP/a1-v10"
+          dotnet --version
+          dotnet new blazor -int Server -n webapp10 -o webapp10 --no-restore
+          cp "$GITHUB_WORKSPACE/tests/a1/Program.cs" webapp10/Program.cs
+          sed -i 's/using webapp.Components;/using webapp10.Components;/' webapp10/Program.cs
+          cp "$GITHUB_WORKSPACE/tests/a1/Probe.razor" webapp10/Components/Pages/Probe.razor
+          dotnet build webapp10/webapp10.csproj -v:q
+          app_pid=''
+          cleanup() {
+            if [[ -n "$app_pid" ]]; then
+              kill "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+          run_round_10() {
+            local label="$1"
+            local mode="$2"
+            ASPNETCORE_URLS=http://127.0.0.1:5019 ASPNETCORE_ENVIRONMENT=Development dotnet webapp10/bin/Debug/net10.0/webapp10.dll > "$RUNNER_TEMP/$label.server.log" 2>&1 &
+            app_pid=$!
+            local ready=0
+            for i in $(seq 1 100); do
+              if curl -fsS -o /dev/null http://127.0.0.1:5019/lab/state; then ready=1; break; fi
+              sleep 0.1
+            done
+            if [[ "$ready" -ne 1 ]]; then cat "$RUNNER_TEMP/$label.server.log"; return 1; fi
+            echo "=== $label ==="
+            PYTHONPATH="$RUNNER_TEMP/a1py" python3 "$GITHUB_WORKSPACE/tests/a1/network_auth.py" "$mode"
+            kill "$app_pid"
+            wait "$app_pid" 2>/dev/null || true
+            app_pid=''
+          }
+          run_round_10 auth10_control control
+          run_round_10 auth10_attack1 attack
+          run_round_10 auth10_attack2 attack

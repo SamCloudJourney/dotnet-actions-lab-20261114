@@ -1,6 +1,6 @@
 # A1: Blazor Server render-batch pool lifetime lab
 
-Two BlazorPack clients run against the shipped ASP.NET Core 11.0.0 assemblies with synthetic circuit data.
+BlazorPack clients run against shipped ASP.NET Core 11.0.0 and 10.0.15 assemblies with synthetic circuit data. The workflow builds generated templates under the pinned SDKs and runs each attack on a clean server process.
 
 The attacker receives and acknowledges its initial batch, then stops reading. Its component produces one 8 MB batch to hold the connection write lock and nine more pending batches. An early ACK for the newest batch returns all pending pooled arrays before SignalR serializes them.
 
@@ -14,4 +14,4 @@ The authenticated-victim variant uses standard ASP.NET Core cookie authenticatio
 
 This proof establishes cross-circuit disclosure, bearer-secret theft, and receipt of an authenticated victim's pending render by an unauthenticated connection in this isolated application. It does not establish remote code execution, a live production target, or Critical severity. The stock Counter page accepts remote click events and can produce transient write-lock contention; a durable backpressure and disclosure chain using only stock Counter content remains unproven. App-controlled large output is the attacker-side precondition used here.
 
-Run the workflow on branch a1-renderbatch-pool-20261114. Requirements: .NET SDK 11.0.100, Python 3, websocket-client==1.8.0, and msgpack==1.1.1.
+Run the workflow on branch a1-renderbatch-pool-20261114. Requirements: .NET SDKs 11.0.100 and 10.0.404, Python 3, websocket-client==1.8.0, and msgpack==1.1.1.

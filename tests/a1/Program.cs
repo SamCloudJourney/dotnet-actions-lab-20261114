@@ -20,6 +20,7 @@ var app = builder.Build();
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
 app.MapStaticAssets();
 
 app.MapPost("/lab/login", async (HttpContext context) =>
