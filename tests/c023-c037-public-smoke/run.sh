@@ -136,4 +136,26 @@ assert allowed == {'sni':'admin.test','host':'admin.test','clientCertificate':Tr
 assert mismatch == {'sni':'public.test','host':'admin.test','clientCertificate':False}, mismatch
 assert inherited == {'sni':'inherit.test','host':'admin.test','clientCertificate':True}, inherited
 PY
+if [[ "$mode" == http2 ]]; then
+  # Observe whether one ordinary curl process coalesces two names onto the
+  # first HTTP/2 TLS connection. This is diagnostic, not a required property.
+  coalesce_rc=0
+  curl --http2 --noproxy '*' --max-time 12 --silent --show-error --verbose \
+    --cacert server.crt \
+    --resolve public.test:46023:127.0.0.1 \
+    --resolve admin.test:46023:127.0.0.1 \
+    -w '\nCOALESCE %{url_effective} %{http_code} %{num_connects}\n' \
+    https://public.test:46023/probe https://admin.test:46023/probe \
+    > coalesce.out 2> coalesce.trace || coalesce_rc=$?
+  python3 - "$coalesce_rc" <<'PY'
+from pathlib import Path
+import sys
+body = Path('coalesce.out').read_text()
+rows = [line for line in body.splitlines() if line.startswith('COALESCE ')]
+observed = ('"sni":"public.test","host":"admin.test","clientCertificate":false' in body
+            and any('admin.test:46023/probe 200 0' in line for line in rows))
+print('COALESCE_OBSERVED' if observed else 'COALESCE_NOT_OBSERVED',
+      'exit=' + sys.argv[1], 'rows=' + repr(rows))
+PY
+fi
 echo "PUBLIC_SMOKE_PASS $mode"
