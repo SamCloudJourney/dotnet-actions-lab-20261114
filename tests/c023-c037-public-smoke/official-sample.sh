@@ -48,11 +48,12 @@ PY
 cat > Sample.csproj <<XML
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup><TargetFramework>$framework</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup><PackageReference Include="Microsoft.AspNetCore.Authentication.Certificate" Version="$release" /></ItemGroup>
 </Project>
 XML
 cat > NuGet.Config <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
-<configuration><packageSources><clear /></packageSources></configuration>
+<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>
 XML
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=c023-c037-sample-root' \
