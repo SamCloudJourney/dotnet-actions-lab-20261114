@@ -67,7 +67,45 @@ jobs:
           status=$?
           set -e
           printf 'SETUID_NOBODY_STATUS=%s\n' "$status"
-          if [ "$status" -eq 0 ]; then cat nobody-result.txt; else printf 'Setuid non-root launch did not complete.\n'; fi
+          if [ "$status" -eq 0 ]; then cat nobody-result.txt; else printf 'Setuid non-root launch did not complete.\\n'; fi
+          mkdir native
+          cd native
+          printf 'int probe(void) { return 7; }\\n' > probe.c
+          cc -fPIC -shared -o libprobe.so probe.c
+          cat > NativeSmoke.csproj <<'PROJECT'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net${{ matrix.sdk == '11.0.100' && '11.0' || '10.0' }}</TargetFramework>
+              <PublishSingleFile>true</PublishSingleFile>
+              <SelfContained>true</SelfContained>
+              <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+              <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+            </PropertyGroup>
+            <ItemGroup>
+              <Content Include="libprobe.so" CopyToPublishDirectory="Always" />
+            </ItemGroup>
+          </Project>
+          PROJECT
+          cat > Program.cs <<'SOURCE'
+          using System;
+          using System.Runtime.InteropServices;
+          class Program
+          {
+              [DllImport("libc")] static extern uint getuid();
+              [DllImport("libc")] static extern uint geteuid();
+              [DllImport("probe")] static extern int probe();
+              static void Main() => Console.WriteLine($"REAL_UID={getuid()} EFFECTIVE_UID={geteuid()} NATIVE_PROBE={probe()}");
+          }
+          SOURCE
+          dotnet publish NativeSmoke.csproj -c Release -r linux-x64 -o out -v:q
+          if [ -e out/libprobe.so ]; then printf 'NATIVE_LOOSE_FILE=1\\n'; else printf 'NATIVE_LOOSE_FILE=0\\n'; fi
+          set +e
+          ./out/NativeSmoke > native-result.txt 2>&1
+          native_status=$?
+          set -e
+          printf 'NATIVE_APP_STATUS=%s\\n' "$native_status"
+          cat native-result.txt
   windows:
     runs-on: windows-2022
     timeout-minutes: 20
