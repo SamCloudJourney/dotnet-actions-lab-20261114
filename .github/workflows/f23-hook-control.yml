@@ -1,0 +1,90 @@
+name: F23 startup hook independence control
+on:
+  push:
+    branches:
+      - f23-public-baseline-20261114
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hook_control:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: '10.0.404'
+            tfm: net10.0
+          - sdk: '11.0.100'
+            tfm: net11.0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Compare setuid launch with and without caller startup hook
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+          TARGET_FRAMEWORK: ${{ matrix.tfm }}
+        run: |
+          set -euo pipefail
+          umask 077
+          lab=$(mktemp -d "$RUNNER_TEMP/f23-hook-control.XXXXXXXX")
+          mkdir -p "$lab/app" "$lab/hook"
+          cat > "$lab/app/App.csproj" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
+          <OutputType>Exe</OutputType><TargetFramework>$TARGET_FRAMEWORK</TargetFramework>
+          <PublishSingleFile>true</PublishSingleFile><SelfContained>true</SelfContained>
+          <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+          </PropertyGroup></Project>
+          EOF
+          cat > "$lab/app/Program.cs" <<'CS'
+          using System;
+          using System.Runtime.InteropServices;
+          class Program {
+              [DllImport("libc")] static extern uint getuid();
+              [DllImport("libc")] static extern uint geteuid();
+              static void Main() => Console.WriteLine($"APP_REAL_UID={getuid()} APP_EUID={geteuid()}");
+          }
+          CS
+          cat > "$lab/hook/Hook.csproj" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>
+          <TargetFramework>$TARGET_FRAMEWORK</TargetFramework>
+          </PropertyGroup></Project>
+          EOF
+          cat > "$lab/hook/StartupHook.cs" <<'CS'
+          using System;
+          using System.Runtime.InteropServices;
+          public class StartupHook {
+              [DllImport("libc")] static extern uint getuid();
+              [DllImport("libc")] static extern uint geteuid();
+              public static void Initialize() => Console.WriteLine($"HOOK_REAL_UID={getuid()} HOOK_EUID={geteuid()}");
+          }
+          CS
+          dotnet publish "$lab/app/App.csproj" -c Release -r linux-x64 -o "$lab/published" -v:q
+          dotnet build "$lab/hook/Hook.csproj" -c Release -v:q
+          sudo useradd -m -s /bin/bash f23hookattacker
+          home=$(getent passwd f23hookattacker | cut -d : -f 6)
+          caller_uid=$(id -u f23hookattacker)
+          sudo install -d -o root -g root -m 755 /opt/f23-hook-victim
+          sudo install -d -o root -g root -m 755 /opt/f23-hook-extract
+          sudo install -o root -g root -m 755 "$lab/published/App" /opt/f23-hook-victim/App
+          sudo chmod 4755 /opt/f23-hook-victim/App
+          sudo install -d -o f23hookattacker -g f23hookattacker -m 700 "$home/hook"
+          sudo install -o f23hookattacker -g f23hookattacker -m 600 "$lab/hook/bin/Release/$TARGET_FRAMEWORK/Hook.dll" "$home/hook/Hook.dll"
+          if sudo -u f23hookattacker -H sudo -n true >/dev/null 2>&1; then echo 'attacker_sudo=unexpected'; exit 1; fi
+          base=$(sudo -u f23hookattacker -H env -i HOME="$home" PATH=/usr/bin:/bin DOTNET_BUNDLE_EXTRACT_BASE_DIR=/opt/f23-hook-extract /opt/f23-hook-victim/App)
+          printf 'baseline=%s\n' "$base"
+          test "$base" = "APP_REAL_UID=$caller_uid APP_EUID=0"
+          hooked=$(sudo -u f23hookattacker -H env -i HOME="$home" PATH=/usr/bin:/bin DOTNET_BUNDLE_EXTRACT_BASE_DIR=/opt/f23-hook-extract DOTNET_STARTUP_HOOKS="$home/hook/Hook.dll" /opt/f23-hook-victim/App)
+          printf 'hooked=%s\n' "$hooked"
+          grep -qx "HOOK_REAL_UID=$caller_uid HOOK_EUID=0" <<< "$hooked"
+          grep -qx "APP_REAL_UID=$caller_uid APP_EUID=0" <<< "$hooked"
+          again=$(sudo -u f23hookattacker -H env -i HOME="$home" PATH=/usr/bin:/bin DOTNET_BUNDLE_EXTRACT_BASE_DIR=/opt/f23-hook-extract /opt/f23-hook-victim/App)
+          printf 'reversal=%s\n' "$again"
+          test "$again" = "$base"
+          printf 'F23_HOOK_INDEPENDENCE_CONTROL=PASS framework=%s\n' "$TARGET_FRAMEWORK"
