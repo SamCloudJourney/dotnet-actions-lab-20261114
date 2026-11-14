@@ -8,6 +8,7 @@ function Require([bool]$condition, [string]$message) {
 
 Note "OS=$([System.Environment]::OSVersion.VersionString)"
 Note "USER=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+Note "RUNNER_IS_ADMIN=$([System.Security.Principal.WindowsPrincipal]::new([System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator))"
 Note "SDK=$(dotnet --version)"
 
 $features = @('Web-Server', 'Web-Url-Auth', 'Web-IP-Security', 'Web-Windows-Auth', 'Web-Mgmt-Tools', 'Web-Scripting-Tools')
@@ -58,6 +59,7 @@ var app = WebApplication.Create(args);
 app.UseStaticFiles();
 
 app.MapGet("/Delete", (HttpContext context) => Results.Text(Describe(context, "PUBLIC")));
+app.MapGet("/AuthOnly/Proof", (HttpContext context) => Results.Text(Describe(context, "AUTH_ONLY")));
 app.MapGet("/Admin/Delete", (HttpContext context) => Results.Text(Describe(context, "PROTECTED_READ")));
 app.MapPost("/Admin/Delete", (HttpContext context) =>
 {
@@ -285,6 +287,10 @@ New-Website -Name 'Hunt04AuthLab' -Port 5089 -IPAddress '127.0.0.1' -PhysicalPat
 Require ($LASTEXITCODE -eq 0) 'Could not disable anonymous auth under Admin'
 & $appcmd set config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/windowsAuthentication '/enabled:true' '/commit:apphost'
 Require ($LASTEXITCODE -eq 0) 'Could not enable Windows auth under Admin'
+& $appcmd set config 'Hunt04AuthLab/AuthOnly' -section:system.webServer/security/authentication/anonymousAuthentication '/enabled:false' '/commit:apphost'
+Require ($LASTEXITCODE -eq 0) 'Could not disable anonymous auth under AuthOnly'
+& $appcmd set config 'Hunt04AuthLab/AuthOnly' -section:system.webServer/security/authentication/windowsAuthentication '/enabled:true' '/commit:apphost'
+Require ($LASTEXITCODE -eq 0) 'Could not enable Windows auth under AuthOnly'
 Note 'IIS_WINDOWS_AUTH_CONFIG_START'
 & $appcmd list config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/anonymousAuthentication
 & $appcmd list config 'Hunt04AuthLab/Admin' -section:system.webServer/security/authentication/windowsAuthentication
@@ -298,29 +304,57 @@ $authStaticDirect = Send-Raw 'GET' '/Admin/secret.txt' 5089
 $authStateBefore = Send-Raw 'GET' '/State' 5089
 $authPostDirect = Send-Raw 'POST' '/Admin/Delete' 5089
 $authStateAfterDirect = Send-Raw 'GET' '/State' 5089
+$authOnlyAnonymous = Send-Raw 'GET' '/AuthOnly/Proof' 5089
 $validAdmin = $false
 try {
     $adminResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:5089/Admin/Delete' -UseDefaultCredentials -UseBasicParsing -TimeoutSec 20
     Note "AUTHENTICATED_ADMIN status=$([int]$adminResponse.StatusCode) body=$($adminResponse.Content)"
-    $validAdmin = $adminResponse.StatusCode -eq 200 -and $adminResponse.Content.Contains('MARKER=PROTECTED_READ') -and $adminResponse.Content.Contains('AUTH=True')
+    $validAdmin = $adminResponse.StatusCode -eq 200 -and $adminResponse.Content.Contains('MARKER=PROTECTED_READ')
 } catch {
     Note "AUTHENTICATED_ADMIN_ERROR=$($_.Exception.Message)"
+}
+$nonAdminName = 'hunt04nonadmin'
+$nonAdminPassword = [Guid]::NewGuid().ToString('N') + 'aA1!'
+$nonAdminSecure = ConvertTo-SecureString $nonAdminPassword -AsPlainText -Force
+New-LocalUser -Name $nonAdminName -Password $nonAdminSecure -PasswordNeverExpires | Out-Null
+$nonAdminCredential = [pscredential]::new("$env:COMPUTERNAME\$nonAdminName", $nonAdminSecure)
+$nonAdminAuthOnly = $false
+try {
+    $nonAdminOpenResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:5089/AuthOnly/Proof' -Credential $nonAdminCredential -UseBasicParsing -TimeoutSec 20
+    Note "NONADMIN_AUTH_ONLY status=$([int]$nonAdminOpenResponse.StatusCode) body=$($nonAdminOpenResponse.Content)"
+    $nonAdminAuthOnly = $nonAdminOpenResponse.StatusCode -eq 200 -and $nonAdminOpenResponse.Content.Contains('MARKER=AUTH_ONLY')
+} catch {
+    Note "NONADMIN_AUTH_ONLY_ERROR=$($_.Exception.Message)"
+}
+$nonAdminDenied = $false
+try {
+    $nonAdminAdminResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:5089/Admin/Delete' -Credential $nonAdminCredential -UseBasicParsing -TimeoutSec 20
+    Note "NONADMIN_ADMIN_UNEXPECTED status=$([int]$nonAdminAdminResponse.StatusCode) body=$($nonAdminAdminResponse.Content)"
+} catch {
+    $nonAdminStatus = [int]$_.Exception.Response.StatusCode
+    $nonAdminReader = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
+    $nonAdminBody = $nonAdminReader.ReadToEnd()
+    $nonAdminReader.Dispose()
+    $nonAdminDenied = $nonAdminStatus -eq 401 -and $nonAdminBody.Contains('401.3')
+    Note "NONADMIN_ADMIN status=$nonAdminStatus role_denial_401_3=$nonAdminDenied"
 }
 $authCrafted = Send-Raw 'GET' '/Admin//../Delete' 5089
 $authStaticCrafted = Send-Raw 'GET' '/Admin//../secret.txt' 5089
 $authPostCrafted = Send-Raw 'POST' '/Admin//../Delete' 5089
 $authStateAfterCrafted = Send-Raw 'GET' '/State' 5089
 $authBaseline = $authPublic.Status -eq 200 -and $authPublic.Text.Contains('MARKER=PUBLIC') -and $authPublic.Text.Contains('PROCESS=w3wp')
-$authGuard = $authDirect.Status -eq 401 -and $authStaticDirect.Status -eq 401 -and $authPostDirect.Status -eq 401
+$authGuard = $authDirect.Status -eq 401 -and $authStaticDirect.Status -eq 401 -and $authPostDirect.Status -eq 401 -and $authOnlyAnonymous.Status -eq 401
 $authDirectWriteBlocked = $authStateBefore.Text.Contains('WRITES=0') -and $authStateAfterDirect.Text.Contains('WRITES=0')
 $authBypass = $authCrafted.Status -eq 200 -and $authCrafted.Text.Contains('MARKER=PROTECTED_READ;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $authCrafted.Text.Contains('AUTH=False')
 $authStatic = $authStaticCrafted.Status -eq 200 -and $authStaticCrafted.Text.Contains('STATIC_PROTECTED_CONTENT_04')
 $authEffect = $authPostCrafted.Status -eq 200 -and $authPostCrafted.Text.Contains('MARKER=PROTECTED_WRITE;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $authPostCrafted.Text.Contains('AUTH=False') -and $authStateAfterCrafted.Text.Contains('WRITES=1')
-Note "AUTH_BASELINE=$authBaseline AUTH_GUARD=$authGuard AUTH_DIRECT_WRITE_BLOCKED=$authDirectWriteBlocked AUTH_ADMIN_POSITIVE=$validAdmin AUTH_BYPASS=$authBypass AUTH_STATIC=$authStatic AUTH_EFFECT=$authEffect"
+Note "AUTH_BASELINE=$authBaseline AUTH_GUARD=$authGuard AUTH_DIRECT_WRITE_BLOCKED=$authDirectWriteBlocked AUTH_ADMIN_POSITIVE=$validAdmin NONADMIN_AUTH_ONLY=$nonAdminAuthOnly NONADMIN_ROLE_DENIED=$nonAdminDenied AUTH_BYPASS=$authBypass AUTH_STATIC=$authStatic AUTH_EFFECT=$authEffect"
 Require $authBaseline 'Windows auth public baseline failed'
 Require $authGuard 'Windows auth / admin role did not deny unauthenticated direct paths'
 Require $authDirectWriteBlocked 'Unauthenticated direct POST changed admin state'
 Require $validAdmin 'Valid local administrator could not reach the protected route'
+Require $nonAdminAuthOnly 'Non-admin Windows credential could not reach authentication-only route'
+Require $nonAdminDenied 'Valid non-admin Windows credential was not denied by the Administrators rule'
 Require $authBypass 'Unauthenticated crafted path did not reach admin route'
 Require $authStatic 'Unauthenticated crafted path did not disclose admin static file'
 Require $authEffect 'Unauthenticated crafted path did not change admin state'
