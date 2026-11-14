@@ -70,7 +70,9 @@ jobs:
           if [ "$status" -eq 0 ]; then cat nobody-result.txt; else printf 'Setuid non-root launch did not complete.\\n'; fi
           mkdir native
           cd native
-          printf 'int probe(void) { return 7; }\\n' > probe.c
+          cat > probe.c <<'C'
+          int probe(void) { return 7; }
+          C
           cc -fPIC -shared -o libprobe.so probe.c
           cat > NativeSmoke.csproj <<'PROJECT'
           <Project Sdk="Microsoft.NET.Sdk">
