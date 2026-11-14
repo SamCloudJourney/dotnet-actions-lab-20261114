@@ -83,7 +83,7 @@ sudo update-ca-certificates >/dev/null 2>&1
 
 dotnet restore Sample.csproj --configfile NuGet.Config --ignore-failed-sources
 dotnet build Sample.csproj --no-restore -c Release
-Logging__LogLevel__Microsoft.AspNetCore.Authentication=Debug dotnet run --project Sample.csproj --no-build --no-restore -c Release > sample.log 2>&1 &
+env 'Logging__LogLevel__Microsoft.AspNetCore.Authentication=Debug' dotnet run --project Sample.csproj --no-build --no-restore -c Release > sample.log 2>&1 &
 sample_pid=$!
 for _ in $(seq 1 80); do
   if grep -q 'Now listening on:' sample.log; then break; fi
