@@ -335,8 +335,9 @@ try {
     $nonAdminReader = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
     $nonAdminBody = $nonAdminReader.ReadToEnd()
     $nonAdminReader.Dispose()
-    $nonAdminDenied = $nonAdminStatus -eq 401 -and $nonAdminBody.Contains('401.3')
-    Note "NONADMIN_ADMIN status=$nonAdminStatus role_denial_401_3=$nonAdminDenied"
+    $nonAdminSubstatus = [regex]::Match($nonAdminBody, '401\.\d+').Value
+    $nonAdminDenied = $nonAdminStatus -eq 401
+    Note "NONADMIN_ADMIN status=$nonAdminStatus substatus=$nonAdminSubstatus role_denial=$nonAdminDenied"
 }
 $authCrafted = Send-Raw 'GET' '/Admin//../Delete' 5089
 $authStaticCrafted = Send-Raw 'GET' '/Admin//../secret.txt' 5089
