@@ -144,7 +144,7 @@ if [[ "$mode" == http2 ]]; then
     --cacert server.crt \
     --resolve public.test:46023:127.0.0.1 \
     --resolve admin.test:46023:127.0.0.1 \
-    -w '\nCOALESCE %{url_effective} %{http_code} %{num_connects}\n' \
+    -w '\nCOALESCE %{url_effective} %{http_code} %{http_version} %{num_connects}\n' \
     https://public.test:46023/probe https://admin.test:46023/probe \
     > coalesce.out 2> coalesce.trace || coalesce_rc=$?
   python3 - "$coalesce_rc" <<'PY'
@@ -152,8 +152,9 @@ from pathlib import Path
 import sys
 body = Path('coalesce.out').read_text()
 rows = [line for line in body.splitlines() if line.startswith('COALESCE ')]
+assert any(line.startswith('COALESCE https://public.test:46023/probe 404 2 ') for line in rows), rows
 observed = ('"sni":"public.test","host":"admin.test","clientCertificate":false' in body
-            and any('admin.test:46023/probe 200 0' in line for line in rows))
+            and any('admin.test:46023/probe 200 2 0' in line for line in rows))
 print('COALESCE_OBSERVED' if observed else 'COALESCE_NOT_OBSERVED',
       'exit=' + sys.argv[1], 'rows=' + repr(rows))
 PY
