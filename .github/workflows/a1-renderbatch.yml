@@ -1,0 +1,63 @@
+name: A1 Blazor render pool synthetic proof
+
+on:
+  push:
+    branches:
+      - a1-renderbatch-pool-20261114
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out public lab
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install .NET 11 SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 11.0.100
+      - name: Run control and two clean attack trials
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          set -euo pipefail
+          dotnet new blazor -int Server -n webapp -o "$RUNNER_TEMP/a1-webapp" --no-restore
+          cp tests/a1/Program.cs "$RUNNER_TEMP/a1-webapp/Program.cs"
+          cp tests/a1/Probe.razor "$RUNNER_TEMP/a1-webapp/Components/Pages/Probe.razor"
+          dotnet build "$RUNNER_TEMP/a1-webapp/webapp.csproj" -v:q
+          python3 -m pip install --disable-pip-version-check --quiet --target "$RUNNER_TEMP/a1py" websocket-client==1.8.0 msgpack==1.1.1
+          app_pid=''
+          cleanup() {
+            if [[ -n "$app_pid" ]]; then
+              kill "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+          run_round() {
+            local label="$1"
+            local mode="$2"
+            ASPNETCORE_URLS=http://127.0.0.1:5019 ASPNETCORE_ENVIRONMENT=Development dotnet "$RUNNER_TEMP/a1-webapp/bin/Debug/net11.0/webapp.dll" > "$RUNNER_TEMP/$label.server.log" 2>&1 &
+            app_pid=$!
+            local ready=0
+            for i in $(seq 1 100); do
+              if curl -fsS -o /dev/null http://127.0.0.1:5019/lab/state; then ready=1; break; fi
+              sleep 0.1
+            done
+            if [[ "$ready" -ne 1 ]]; then cat "$RUNNER_TEMP/$label.server.log"; return 1; fi
+            echo "=== $label ==="
+            PYTHONPATH="$RUNNER_TEMP/a1py" python3 tests/a1/network_full.py "$mode"
+            kill "$app_pid"
+            wait "$app_pid" 2>/dev/null || true
+            app_pid=''
+          }
+          run_round control control
+          run_round attack_clean1 attack
+          run_round attack_clean2 attack
