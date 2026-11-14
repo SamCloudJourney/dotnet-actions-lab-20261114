@@ -10,7 +10,7 @@ Note "OS=$([System.Environment]::OSVersion.VersionString)"
 Note "USER=$([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Note "SDK=$(dotnet --version)"
 
-$features = @('Web-Server', 'Web-Url-Auth', 'Web-Mgmt-Tools', 'Web-Scripting-Tools')
+$features = @('Web-Server', 'Web-Url-Auth', 'Web-IP-Security', 'Web-Mgmt-Tools', 'Web-Scripting-Tools')
 $install = Install-WindowsFeature -Name $features -IncludeManagementTools
 Note "IIS_FEATURES_SUCCESS=$($install.Success) RESTART_NEEDED=$($install.RestartNeeded)"
 Require $install.Success 'IIS feature installation failed'
@@ -36,6 +36,9 @@ Note "RUNTIMES_END"
 $source = Join-Path $env:RUNNER_TEMP 'hunt04-source'
 $publish = Join-Path $env:RUNNER_TEMP 'hunt04-publish'
 New-Item -ItemType Directory -Path $source -Force | Out-Null
+$staticDir = Join-Path $source 'wwwroot\Admin'
+New-Item -ItemType Directory -Path $staticDir -Force | Out-Null
+Set-Content -Path (Join-Path $staticDir 'secret.txt') -Encoding ascii -Value 'STATIC_PROTECTED_CONTENT_04'
 Set-Content -Path (Join-Path $source 'IisPathLab.csproj') -Encoding utf8 -Value @'
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
@@ -51,6 +54,7 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Http.Features;
 
 var app = WebApplication.Create(args);
+app.UseStaticFiles();
 
 app.MapGet("/Delete", (HttpContext context) => Results.Text(Describe(context, "PUBLIC")));
 app.MapGet("/Admin/Delete", (HttpContext context) => Results.Text(Describe(context, "PROTECTED_READ")));
@@ -134,19 +138,22 @@ function Is-Denied($response) { return $response.Status -in @(401, 403) -and $re
 $public = Send-Raw 'GET' '/Delete'
 $directGet = Send-Raw 'GET' '/Admin/Delete'
 $dotControl = Send-Raw 'GET' '/Admin/X/../Delete'
+$staticDirect = Send-Raw 'GET' '/Admin/secret.txt'
 $stateBefore = Send-Raw 'GET' '/State'
 $directPost = Send-Raw 'POST' '/Admin/Delete'
 $stateAfterDirect = Send-Raw 'GET' '/State'
 $craftedGet = Send-Raw 'GET' '/Admin//../Delete'
+$staticCrafted = Send-Raw 'GET' '/Admin//../secret.txt'
 $craftedPost = Send-Raw 'POST' '/Admin//../Delete'
 $stateAfterCrafted = Send-Raw 'GET' '/State'
 
 $inprocBaseline = $public.Status -eq 200 -and $public.Text.Contains('MARKER=PUBLIC') -and $public.Text.Contains('PROCESS=w3wp')
-$inprocGuard = (Is-Denied $directGet) -and (Is-Denied $dotControl) -and (Is-Denied $directPost)
+$inprocGuard = (Is-Denied $directGet) -and (Is-Denied $dotControl) -and (Is-Denied $directPost) -and (Is-Denied $staticDirect)
 $directWriteBlocked = $stateBefore.Text.Contains('WRITES=0') -and $stateAfterDirect.Text.Contains('WRITES=0')
 $inprocBypass = $craftedGet.Status -eq 200 -and $craftedGet.Text.Contains('MARKER=PROTECTED_READ;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp')
 $inprocEffect = $craftedPost.Status -eq 200 -and $craftedPost.Text.Contains('MARKER=PROTECTED_WRITE;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp') -and $stateAfterCrafted.Text.Contains('WRITES=1')
-Note "INPROC_BASELINE=$inprocBaseline INPROC_GUARD=$inprocGuard DIRECT_WRITE_BLOCKED=$directWriteBlocked INPROC_BYPASS=$inprocBypass INPROC_EFFECT=$inprocEffect"
+$inprocStatic = $staticCrafted.Status -eq 200 -and $staticCrafted.Text.Contains('STATIC_PROTECTED_CONTENT_04')
+Note "INPROC_BASELINE=$inprocBaseline INPROC_GUARD=$inprocGuard DIRECT_WRITE_BLOCKED=$directWriteBlocked INPROC_BYPASS=$inprocBypass INPROC_EFFECT=$inprocEffect INPROC_STATIC=$inprocStatic"
 
 $outConfig = (Get-Content $webConfig -Raw).Replace('hostingModel="InProcess"', 'hostingModel="OutOfProcess"')
 Set-Content -Path $webConfig -Encoding utf8 -Value $outConfig
@@ -155,17 +162,44 @@ Start-Sleep -Seconds 3
 $outPublic = Send-Raw 'GET' '/Delete'
 $outDirect = Send-Raw 'GET' '/Admin/Delete'
 $outCrafted = Send-Raw 'GET' '/Admin//../Delete'
+$outStaticDirect = Send-Raw 'GET' '/Admin/secret.txt'
+$outStaticCrafted = Send-Raw 'GET' '/Admin//../secret.txt'
 $outprocBaseline = $outPublic.Status -eq 200 -and $outPublic.Text.Contains('MARKER=PUBLIC') -and $outPublic.Text.Contains('PROCESS=dotnet')
-$outprocGuard = Is-Denied $outDirect
+$outprocGuard = (Is-Denied $outDirect) -and (Is-Denied $outStaticDirect)
 $outprocNoBypass = $outCrafted.Text -notmatch 'MARKER=PROTECTED' -and $outCrafted.Status -in @(200, 401, 403, 404)
-Note "OUTPROC_BASELINE=$outprocBaseline OUTPROC_GUARD=$outprocGuard OUTPROC_NO_BYPASS=$outprocNoBypass"
+$outprocStaticSafe = $outStaticCrafted.Text -notmatch 'STATIC_PROTECTED_CONTENT_04' -and $outStaticCrafted.Status -in @(200, 401, 403, 404)
+Note "OUTPROC_BASELINE=$outprocBaseline OUTPROC_GUARD=$outprocGuard OUTPROC_NO_BYPASS=$outprocNoBypass OUTPROC_STATIC_SAFE=$outprocStaticSafe"
+
+$ipConfig = [regex]::Replace($outConfig, '(?s)<location path="Admin">.*?</location>', '')
+$ipConfig = $ipConfig.Replace('hostingModel="OutOfProcess"', 'hostingModel="InProcess"')
+Set-Content -Path $webConfig -Encoding utf8 -Value $ipConfig
+& $appcmd set config 'Hunt04Lab/Admin' -section:system.webServer/security/ipSecurity '/allowUnlisted:false' '/denyAction:Forbidden' '/commit:apphost'
+Require ($LASTEXITCODE -eq 0) 'Could not configure scoped IIS IP restriction'
+Note 'IIS_IP_CONFIG_START'
+& $appcmd list config 'Hunt04Lab/Admin' -section:system.webServer/security/ipSecurity
+Require ($LASTEXITCODE -eq 0) 'IIS did not load the Admin IP restriction'
+Note 'IIS_IP_CONFIG_END'
+Restart-WebAppPool -Name 'Hunt04Pool'
+Start-Sleep -Seconds 3
+$ipPublic = Send-Raw 'GET' '/Delete'
+$ipDirect = Send-Raw 'GET' '/Admin/Delete'
+$ipCrafted = Send-Raw 'GET' '/Admin//../Delete'
+$ipBaseline = $ipPublic.Status -eq 200 -and $ipPublic.Text.Contains('MARKER=PUBLIC') -and $ipPublic.Text.Contains('PROCESS=w3wp')
+$ipGuard = $ipDirect.Status -eq 403 -and $ipDirect.Text -notmatch 'MARKER=PROTECTED'
+$ipBypass = $ipCrafted.Status -eq 200 -and $ipCrafted.Text.Contains('MARKER=PROTECTED_READ;PATH=/Admin/Delete;RAW=/Admin//../Delete;PROCESS=w3wp')
+Note "IP_BASELINE=$ipBaseline IP_GUARD=$ipGuard IP_BYPASS=$ipBypass"
 
 Require $inprocBaseline 'In-process ASP.NET Core baseline did not run in w3wp'
 Require $inprocGuard 'Direct or ordinary dot-segment path was not denied by IIS'
 Require $directWriteBlocked 'Direct denial did not preserve write counter'
 Require $inprocBypass 'Crafted path did not reach the protected read route in-process'
 Require $inprocEffect 'Crafted POST did not cause the protected write effect in-process'
+Require $inprocStatic 'Crafted path did not disclose the IIS-protected static file'
 Require $outprocBaseline 'Out-of-process baseline did not run in dotnet'
 Require $outprocGuard 'Direct URL was not denied out-of-process'
 Require $outprocNoBypass 'Crafted path reached protected route out-of-process'
+Require $outprocStaticSafe 'Crafted path disclosed static file out-of-process'
+Require $ipBaseline 'In-process baseline failed under IP restrictions'
+Require $ipGuard 'Scoped IP restriction did not deny direct Admin path'
+Require $ipBypass 'Crafted path did not bypass the scoped IP restriction'
 Note 'LAB04_FULL_CHAIN_PASS'
