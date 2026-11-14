@@ -179,7 +179,12 @@ async def main():
     mismatch_body = json.loads(mismatch['body'])
     assert allowed_body['protocol'] == 'HTTP/3' and allowed_body['clientCertificate'] is True, allowed_body
     assert mismatch_body['protocol'] == 'HTTP/3' and mismatch_body['host'] == 'admin.test' and mismatch_body['clientCertificate'] is False, mismatch_body
+    assert allowed_body['handshakeFeature'] is False and mismatch_body['handshakeFeature'] is False, (allowed_body, mismatch_body)
     print('HTTP3_PUBLIC_SMOKE_PASS', flush=True)
 
 asyncio.run(main())
 PY
+grep -q 'LAB_SNI=admin.test REQUIRE_CLIENT_CERT=True' app.log
+grep -q 'LAB_SNI=public.test REQUIRE_CLIENT_CERT=False' app.log
+grep -q 'LAB_SNI=inherit.test REQUIRE_CLIENT_CERT=True' app.log
+grep '^LAB_SNI=' app.log
