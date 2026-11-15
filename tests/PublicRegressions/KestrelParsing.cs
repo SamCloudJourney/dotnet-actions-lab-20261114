@@ -55,6 +55,18 @@ internal static class KestrelParsing
             Require(pathResult.Contains("raw=http://example.test/a\\..\\b", StringComparison.Ordinal),
                 "RawTarget did not preserve example backslashes");
             Console.WriteLine("PUBLIC_68880_RELEASE_TARGET_ACCEPTED: " + FirstLine(pathResult));
+            var bodyStart = pathResult.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            if (bodyStart >= 0)
+            {
+                Console.WriteLine("PUBLIC_68880_RELEASE_TARGET_BODY=" + pathResult[(bodyStart + 4)..].Trim());
+            }
+
+            // RFC 9112 control: a mismatched Host must not pass Kestrel authority checks.
+            string hostMismatchRequest = "GET http://example.test/path HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n";
+            string hostMismatchResult = await SendLocalAsync(port, hostMismatchRequest);
+            Require(hostMismatchResult.StartsWith("HTTP/1.1 400 ", StringComparison.Ordinal),
+                "Kestrel accepted mismatched absolute authority/Host: " + FirstLine(hostMismatchResult));
+            Console.WriteLine("HOST_AUTHORITY_MISMATCH_REJECTED: " + FirstLine(hostMismatchResult));
 
             // Public bug #66794: incomplete chunk-extension token validation, distinct from CRLF checks.
             string invalidExtensionRequest = "POST / HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2;a=b c\r\nxy\r\n0\r\n\r\n";
