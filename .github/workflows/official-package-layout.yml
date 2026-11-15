@@ -39,12 +39,12 @@ jobs:
               Write-Output "PACKAGE_UNAVAILABLE=$packageId"
               continue
             }
+            $selectedVersion = $version
             if (@($index.versions) -notcontains $version) {
-              Write-Output "PACKAGE_VERSION_NOT_LISTED=$packageId@$version"
-              Write-Output "LATEST_LISTED_VERSION=$($index.versions[-1])"
-              continue
+              $selectedVersion = $index.versions[-1]
+              Write-Output "PACKAGE_VERSION_FALLBACK=$packageId@$selectedVersion"
             }
-            $pkgUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/$version/$lowerId.$version.nupkg"
+            $pkgUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/$selectedVersion/$lowerId.$selectedVersion.nupkg"
             $nupkgPath = Join-Path $env:RUNNER_TEMP "$lowerId.nupkg"
             Invoke-WebRequest -Uri $pkgUrl -OutFile $nupkgPath
             $sha = (Get-FileHash $nupkgPath -Algorithm SHA256).Hash
@@ -56,7 +56,7 @@ jobs:
               $preextractEntries = @($names | Where-Object { $_.StartsWith('data/extractedManifest/', [StringComparison]::OrdinalIgnoreCase) })
               $preextractFiles = @($preextractEntries | Where-Object { -not $_.EndsWith('/') })
               Write-Output "PACKAGE=$packageId"
-              Write-Output "PACKAGE_VERSION=$version"
+              Write-Output "PACKAGE_VERSION=$selectedVersion"
               Write-Output "PACKAGE_SHA256=$sha"
               Write-Output "ZIP_ENTRY_COUNT=$($names.Count)"
               Write-Output "HAS_MSI_JSON=$hasMsiJson"
