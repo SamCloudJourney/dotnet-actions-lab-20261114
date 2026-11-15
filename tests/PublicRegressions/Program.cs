@@ -26,6 +26,7 @@ Require(!noPeer.ForwardedHeaderRemains, "Accepted null-peer header should be con
 
 Console.WriteLine("PUBLISHED_PUBLIC_REGRESSION_67817_REPRODUCED");
 Console.WriteLine($"RUNTIME={Environment.Version}");
+await KestrelParsing.RunAsync();
 
 static Result Evaluate(IPAddress? remoteIp)
 {
