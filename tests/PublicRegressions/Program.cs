@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
-const string headerValue = "192.0.2.45:443";
 var allowedPeer = IPAddress.Parse("10.0.0.1");
 var unknownPeer = IPAddress.Parse("10.0.0.2");
 var forwardedAddress = IPAddress.Parse("192.0.2.45");
