@@ -15,42 +15,59 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Inspect first-party published NuGet package ZIP entries only
+      - name: Inspect multiple first-party published NuGet archives without execution
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.IO.Compression
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $packageId = 'Microsoft.NET.Workload.Mono.Toolchain.Current.Manifest-11.0.100.Msi.x64'
+          $packages = @(
+            'Microsoft.NET.Workload.Mono.Toolchain.Current.Manifest-11.0.100.Msi.x64',
+            'Microsoft.NET.Workload.Mono.Toolchain.net10.Manifest-11.0.100.Msi.x64',
+            'Microsoft.NET.Workload.Emscripten.Current.Manifest-11.0.100.Msi.x64',
+            'Microsoft.NET.Workload.Emscripten.net10.Manifest-11.0.100.Msi.x64',
+            'Microsoft.NET.Workloads.11.0.100.Msi.x64'
+          )
           $version = '11.0.100'
-          $lowerId = $packageId.ToLowerInvariant()
-          $indexUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/index.json"
-          $index = Invoke-RestMethod -Uri $indexUrl
-          if (@($index.versions) -notcontains $version) {
-            Write-Output "PACKAGE_VERSION_NOT_LISTED=$packageId@$version"
-            Write-Output "LATEST_LISTED_VERSION=$($index.versions[-1])"
-            exit 0
+          foreach ($packageId in $packages) {
+            $lowerId = $packageId.ToLowerInvariant()
+            $indexUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/index.json"
+            try {
+              $index = Invoke-RestMethod -Uri $indexUrl
+            }
+            catch {
+              Write-Output "PACKAGE_UNAVAILABLE=$packageId"
+              continue
+            }
+            if (@($index.versions) -notcontains $version) {
+              Write-Output "PACKAGE_VERSION_NOT_LISTED=$packageId@$version"
+              Write-Output "LATEST_LISTED_VERSION=$($index.versions[-1])"
+              continue
+            }
+            $pkgUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/$version/$lowerId.$version.nupkg"
+            $nupkgPath = Join-Path $env:RUNNER_TEMP "$lowerId.nupkg"
+            Invoke-WebRequest -Uri $pkgUrl -OutFile $nupkgPath
+            $sha = (Get-FileHash $nupkgPath -Algorithm SHA256).Hash
+            $archive = [System.IO.Compression.ZipFile]::OpenRead($nupkgPath)
+            try {
+              $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\','/') })
+              $msi = @($names | Where-Object { $_.EndsWith('.msi', [StringComparison]::OrdinalIgnoreCase) })
+              $hasMsiJson = @($names | Where-Object { $_.Equals('data/msi.json', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+              $preextractEntries = @($names | Where-Object { $_.StartsWith('data/extractedManifest/', [StringComparison]::OrdinalIgnoreCase) })
+              $preextractFiles = @($preextractEntries | Where-Object { -not $_.EndsWith('/') })
+              Write-Output "PACKAGE=$packageId"
+              Write-Output "PACKAGE_VERSION=$version"
+              Write-Output "PACKAGE_SHA256=$sha"
+              Write-Output "ZIP_ENTRY_COUNT=$($names.Count)"
+              Write-Output "HAS_MSI_JSON=$hasMsiJson"
+              Write-Output "MSI_ENTRY_COUNT=$($msi.Count)"
+              Write-Output "PREEXTRACT_ENTRY_COUNT=$($preextractEntries.Count)"
+              Write-Output "PREEXTRACT_FILE_COUNT=$($preextractFiles.Count)"
+              foreach($name in $preextractFiles) { Write-Output "PREEXTRACT_FILE=$name" }
+              Write-Output "PACKAGE_INSPECTION_COMPLETE=$packageId"
+            }
+            finally {
+              $archive.Dispose()
+            }
           }
-          $nupkgPath = Join-Path $env:RUNNER_TEMP 'official-manifest.nupkg'
-          $pkgUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/$version/$lowerId.$version.nupkg"
-          Invoke-WebRequest -Uri $pkgUrl -OutFile $nupkgPath
-          $sha = (Get-FileHash $nupkgPath -Algorithm SHA256).Hash
-          $archive = [System.IO.Compression.ZipFile]::OpenRead($nupkgPath)
-          try {
-            $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\','/') })
-            $msi = @($names | Where-Object { $_.EndsWith('.msi', [StringComparison]::OrdinalIgnoreCase) })
-            $hasManifestJson = @($names | Where-Object { $_.Equals('data/msi.json', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
-            $hasPreextract = @($names | Where-Object { $_.StartsWith('data/extractedManifest/', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
-            Write-Output "OFFICIAL_PACKAGE_ID=$packageId"
-            Write-Output "OFFICIAL_PACKAGE_VERSION=$version"
-            Write-Output "PUBLIC_PACKAGE_SHA256=$sha"
-            Write-Output "ZIP_ENTRY_COUNT=$($names.Count)"
-            Write-Output "HAS_MSI_JSON=$hasManifestJson"
-            Write-Output "HAS_PREEXTRACTED_MANIFEST=$hasPreextract"
-            Write-Output "MSI_ENTRY_COUNT=$($msi.Count)"
-            foreach ($name in $msi) { Write-Output "MSI_ENTRY=$name" }
-            Write-Output "OFFICIAL_PACKAGE_LAYOUT_CHECK_PASS"
-          }
-          finally {
-            $archive.Dispose()
-          }
+          Write-Output "OFFICIAL_PACKAGE_MULTI_LAYOUT_CHECK_PASS"
