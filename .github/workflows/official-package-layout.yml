@@ -1,0 +1,56 @@
+name: Official .NET workload manifest package layout
+
+on:
+  push:
+    branches:
+      - audit-official-manifest-layout-20261115
+    paths:
+      - '.github/workflows/official-package-layout.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Inspect first-party published NuGet package ZIP entries only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $packageId = 'Microsoft.NET.Workload.Mono.Toolchain.Current.Manifest-11.0.100.Msi.x64'
+          $version = '11.0.100'
+          $lowerId = $packageId.ToLowerInvariant()
+          $indexUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/index.json"
+          $index = Invoke-RestMethod -Uri $indexUrl
+          if (@($index.versions) -notcontains $version) {
+            Write-Output "PACKAGE_VERSION_NOT_LISTED=$packageId@$version"
+            Write-Output "LATEST_LISTED_VERSION=$($index.versions[-1])"
+            exit 0
+          }
+          $nupkgPath = Join-Path $env:RUNNER_TEMP 'official-manifest.nupkg'
+          $pkgUrl = "https://api.nuget.org/v3-flatcontainer/$lowerId/$version/$lowerId.$version.nupkg"
+          Invoke-WebRequest -Uri $pkgUrl -OutFile $nupkgPath
+          $sha = (Get-FileHash $nupkgPath -Algorithm SHA256).Hash
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($nupkgPath)
+          try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\','/') })
+            $msi = @($names | Where-Object { $_.EndsWith('.msi', [StringComparison]::OrdinalIgnoreCase) })
+            $hasManifestJson = @($names | Where-Object { $_.Equals('data/msi.json', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+            $hasPreextract = @($names | Where-Object { $_.StartsWith('data/extractedManifest/', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+            Write-Output "OFFICIAL_PACKAGE_ID=$packageId"
+            Write-Output "OFFICIAL_PACKAGE_VERSION=$version"
+            Write-Output "PUBLIC_PACKAGE_SHA256=$sha"
+            Write-Output "ZIP_ENTRY_COUNT=$($names.Count)"
+            Write-Output "HAS_MSI_JSON=$hasManifestJson"
+            Write-Output "HAS_PREEXTRACTED_MANIFEST=$hasPreextract"
+            Write-Output "MSI_ENTRY_COUNT=$($msi.Count)"
+            foreach ($name in $msi) { Write-Output "MSI_ENTRY=$name" }
+            Write-Output "OFFICIAL_PACKAGE_LAYOUT_CHECK_PASS"
+          }
+          finally {
+            $archive.Dispose()
+          }
