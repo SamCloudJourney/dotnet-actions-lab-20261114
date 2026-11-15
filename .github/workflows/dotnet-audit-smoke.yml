@@ -1,0 +1,33 @@
+name: .NET audit smoke (public and non-sensitive)
+
+on:
+  push:
+    branches:
+      - audit/20261115-dotnet-validation
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - name: Check out public validation branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '11.0.100'
+      - name: Run non-sensitive smoke checks
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: bash tests/run.sh
