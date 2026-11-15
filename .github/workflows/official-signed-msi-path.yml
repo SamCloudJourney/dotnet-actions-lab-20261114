@@ -1,0 +1,89 @@
+name: Official signed workload manifest MSI-mode smoke
+
+on:
+  push:
+    branches:
+      - audit-signed-msi-path-20261115
+    paths:
+      - '.github/workflows/official-signed-msi-path.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  signed-manifest-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out owned public test repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Select exact official SDK version
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 11.0.100
+      - name: Run official signed manifest only (isolated hosted Windows)
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+          DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $root = Split-Path (Get-Command dotnet).Source -Parent
+          $marker = Join-Path $root 'metadata\workloads\11.0.100\installertype\msi'
+          $markerExisted = Test-Path $marker
+          $tempDir = Join-Path $env:RUNNER_TEMP 'public-signed-manifest-smoke'
+          New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+          $cacheDir = Join-Path $tempDir 'official-nuget-cache'
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+          $pkgId='microsoft.net.workloads.11.0.100.msi.x64'
+          $pkgVersion='11.100.1'
+          $uri="https://api.nuget.org/v3-flatcontainer/$pkgId/$pkgVersion/$pkgId.$pkgVersion.nupkg"
+          $pkgFile=Join-Path $cacheDir "$pkgId.$pkgVersion.nupkg"
+          Invoke-WebRequest -Uri $uri -OutFile $pkgFile
+          $pkgHash=(Get-FileHash $pkgFile -Algorithm SHA256).Hash
+          if ($pkgHash -ne '6EB11CE9C2D71184D17B7D79A3B78FA7D890D9F9B15376FD548C0E8E3A682136') {
+            throw "Official NuGet package SHA256 unexpectedly changed."
+          }
+          Write-Output "OFFICIAL_SIGNED_PKG_SHA256=$pkgHash"
+          Write-Output "SDK_VERSION=$(dotnet --version)"
+          Write-Output "ORIGINAL_MSI_MARKER=$markerExisted"
+          $global = '{"sdk":{"version":"11.0.100","workloads-update-mode":"workload-set"}}'
+          Set-Content -Path (Join-Path $tempDir 'global.json') -Value $global
+          try {
+            if (-not $markerExisted) {
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $marker) | Out-Null
+              New-Item -ItemType File -Force -Path $marker | Out-Null
+            }
+            Write-Output "FORCED_MSI_INSTALL_MODE_MARKER=$(Test-Path $marker)"
+            Push-Location $tempDir
+            try {
+              $outputFile = Join-Path $tempDir 'cli-output.log'
+              & dotnet workload update --advertising-manifests-only --from-cache $cacheDir --verbosity diagnostic *> $outputFile
+              $exit = $LASTEXITCODE
+              Write-Output "CLI_EXIT_CODE=$exit"
+              $cmdMatches = @(Select-String -Path $outputFile -Pattern 'advertis|manifest|msi|error|failed' -AllMatches | Select-Object -First 25)
+              foreach($m in $cmdMatches) { Write-Output "CLI_LOG=$($m.Line.Substring(0,[Math]::Min(240,$m.Line.Length)))" }
+            } finally {
+              Pop-Location
+            }
+            $logs=@(Get-ChildItem -Path $env:RUNNER_TEMP -Filter 'Microsoft.NET.Workload_*.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 6)
+            Write-Output "SDK_WORKLOAD_LOG_FILES=$($logs.Count)"
+            $adminSeen=$false
+            foreach ($log in $logs) {
+              Write-Output "SDK_WORKLOAD_LOG=$($log.Name)"
+              foreach ($m in @(Select-String -Path $log.FullName -Pattern 'ExtractManifestAsync: Running admin install','Admin install failed','ExtractManifestAsync: Extracting','VerifySignatures' -ErrorAction SilentlyContinue | Select-Object -First 18)) {
+                Write-Output "SDK_LOG_MATCH=$($m.Line.Substring(0,[Math]::Min(260,$m.Line.Length)))"
+                if ($m.Line.Contains('Running admin install')) { $adminSeen=$true }
+              }
+            }
+            Write-Output "SDK_ADMIN_EXTRACTION_INVOKED=$adminSeen"
+            Write-Output "SIGNED_OFFICIAL_MSI_SMOKE_COMPLETED"
+          } finally {
+            if (-not $markerExisted -and (Test-Path $marker)) {
+              Remove-Item -Path $marker -Force
+            }
+          }
