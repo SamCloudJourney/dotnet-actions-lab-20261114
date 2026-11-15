@@ -70,7 +70,15 @@ jobs:
             } finally {
               Pop-Location
             }
-            $logs=@(Get-ChildItem -Path $env:RUNNER_TEMP -Filter 'Microsoft.NET.Workload_*.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 6)
+            $dirs = @([System.IO.Path]::GetTempPath(), $env:TEMP, $env:TMP, $env:RUNNER_TEMP) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+            $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+            $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+            Write-Output "CURRENT_PROCESS_ADMIN_ROLE=$($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator))"
+            $logs=@(
+              foreach ($dir in $dirs) {
+                Get-ChildItem -Path $dir -Filter 'Microsoft.NET.Workload_*.log' -File -ErrorAction SilentlyContinue
+              }
+            ) | Sort-Object FullName -Unique | Sort-Object LastWriteTime -Descending | Select-Object -First 12
             Write-Output "SDK_WORKLOAD_LOG_FILES=$($logs.Count)"
             $adminSeen=$false
             foreach ($log in $logs) {
