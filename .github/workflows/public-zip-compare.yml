@@ -1,0 +1,39 @@
+name: Public .NET ZIP permissions comparison
+
+on:
+  push:
+    branches:
+      - audit-public-zip-permissions-20261115
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: public regression on ${{ matrix.sdk }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: '10.0.x'
+            tfm: net10.0
+          - sdk: '11.0.100'
+            tfm: net11.0
+    steps:
+      - name: Check out researcher-owned public lab
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install official .NET SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Print SDK and run public comparison
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          dotnet --info
+          dotnet run --project tests/zip-permission/ZipOverwrite.csproj -p:TargetFramework=${{ matrix.tfm }}
