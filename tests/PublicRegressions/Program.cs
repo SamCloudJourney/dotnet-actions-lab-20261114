@@ -3,6 +3,7 @@
 // All addresses are documentation/test addresses. No private or unpublished research.
 using System.Net;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
