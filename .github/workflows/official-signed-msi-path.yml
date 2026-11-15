@@ -49,6 +49,18 @@ jobs:
             throw "Official NuGet package SHA256 unexpectedly changed."
           }
           Write-Output "OFFICIAL_SIGNED_PKG_SHA256=$pkgHash"
+          $unzipped=Join-Path $tempDir 'official-package-inspection'
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($pkgFile,$unzipped)
+          $msiFiles=@(Get-ChildItem -Path $unzipped -Recurse -Filter '*.msi' -File)
+          Write-Output "OFFICIAL_MSI_FILES=$($msiFiles.Count)"
+          foreach($msi in $msiFiles) {
+            $msiSig=Get-AuthenticodeSignature -FilePath $msi.FullName
+            Write-Output "OFFICIAL_MSI_SIGNING_STATUS=$($msiSig.Status)"
+            Write-Output "OFFICIAL_MSI_SIGNATURE_TYPE=$($msiSig.SignatureType)"
+            if($msiSig.SignerCertificate) {
+              Write-Output "OFFICIAL_MSI_SIGNER=$($msiSig.SignerCertificate.Subject)"
+            }
+          }
           Write-Output "SDK_VERSION=$(dotnet --version)"
           Write-Output "ORIGINAL_MSI_MARKER=$markerExisted"
           $global = '{"sdk":{"version":"11.0.100","workloads-update-mode":"workload-set"}}'
