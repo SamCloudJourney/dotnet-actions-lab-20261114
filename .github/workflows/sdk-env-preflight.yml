@@ -1,0 +1,48 @@
+name: Public SDK environment preflight
+
+on:
+  push:
+    branches:
+      - audit-sdk-environment-20261115
+    paths:
+      - '.github/workflows/sdk-env-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out public fixture repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up published .NET 11 SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 11.0.100
+      - name: Inspect CLI and SDK installation configuration without modifying it
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkVersion = (dotnet --version).Trim()
+          Write-Output "SDK_VERSION=$sdkVersion"
+          $hostPath = (Get-Command dotnet).Source
+          $root = Split-Path -Path $hostPath -Parent
+          $signature = Get-AuthenticodeSignature -FilePath $hostPath
+          Write-Output "HOST_SIGNING_STATUS=$($signature.Status)"
+          Write-Output "HOST_SIGNATURE_TYPE=$($signature.SignatureType)"
+          $marker = Join-Path $root 'metadata\workloads\11.0.100\installertype\msi'
+          Write-Output "MSI_INSTALL_MODE_MARKER_PRESENT=$(Test-Path $marker)"
+          $helpText = dotnet workload update --help | Out-String
+          foreach ($flag in @('--advertising-manifests-only','--from-cache','--skip-sign-check')) {
+            Write-Output "HELP_CONTAINS_$($flag.Replace('-','_'))=$($helpText.Contains($flag))"
+          }
+          if ($sdkVersion -ne '11.0.100') { throw 'Unexpected SDK version' }
+          if (-not $helpText.Contains('--advertising-manifests-only')) { throw 'Missing expected public help option' }
+          Write-Output 'PUBLIC_SDK_PREFLIGHT_PASS'
