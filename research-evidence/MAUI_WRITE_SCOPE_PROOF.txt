@@ -1,0 +1,7 @@
+LAB ONLY - controlled contents:write authority demonstration
+Synthetic source run ID=43817903189
+Synthetic source branch=research/maui-write-scope-20261116
+Write destination=research/maui-write-evidence-20261116:research-evidence/MAUI_WRITE_SCOPE_PROOF.txt
+Real external action executed=false
+Microsoft credentials present=false
+Production repository modified=false
