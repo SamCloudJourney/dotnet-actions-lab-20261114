@@ -13,7 +13,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p ci-failed
-          printf '%s\n' '${{ github.event.pull_request.number }}' > ci-failed/pr-number.txt
+          printf '%s\n' '90002' > ci-failed/pr-number.txt
           printf '1\n' > ci-failed/total.txt
           printf 'LAB ONLY: safe artifact from a deliberately failed run\n' > ci-failed/sv-output.txt
       - name: Persist artifact despite later failed check
