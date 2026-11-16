@@ -1,0 +1,51 @@
+name: Round5 Authentic MSBuild Artifact Provenance Observer
+on:
+  workflow_run:
+    workflows: ['Skill Validation']
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  inspect:
+    if: >-
+      github.repository == 'SamCloudJourney/dotnet-actions-lab-20261114' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      startsWith(github.event.workflow_run.head_branch, 'research/round5-authentic-skill-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download exact upstream producer artifact
+        id: get
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: skill-validator-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Log missing artifact without claiming success
+        if: steps.get.outcome != 'success'
+        run: echo 'ROUND5_AUTHENTIC_PRODUCER_ARTIFACT_NOT_AVAILABLE=true'
+      - name: Compare actual PR with source-faithful artifact
+        if: steps.get.outcome == 'success'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs=require('fs'), run=context.payload.workflow_run;
+            const raw=fs.readFileSync('pr-number.txt','utf8').trim();
+            const actual=Number(run.pull_requests?.[0]?.number);
+            const reported=Number(raw);
+            const total=fs.readFileSync('total.txt','utf8').trim();
+            const rc=fs.readFileSync('exit-code.txt','utf8').trim();
+            const output=fs.existsSync('sv-output.txt')?fs.readFileSync('sv-output.txt','utf8'):'';
+            const result={
+              sourceRun:run.id,conclusion:run.conclusion,
+              branch:run.head_branch,sourceRepo:run.head_repository?.full_name,
+              eventPR:actual,artifactPR:reported,targetMatches:actual===reported,
+              total,exitCode:rc,outputBytes:Buffer.byteLength(output),
+              outputHasInertInput:output.includes('LAB-STATIC-PAYLOAD'),
+              noApiWrites:true
+            };
+            console.log('ROUND5_REAL_MSBUILD_PRODUCER_META='+JSON.stringify(result));
+            if(run.head_repository?.full_name!==context.repo.owner+'/'+context.repo.repo)throw Error('unexpected source origin');
+            if(!Number.isSafeInteger(actual)||actual<=0||actual!==reported)throw Error('upstream metadata mismatch');
