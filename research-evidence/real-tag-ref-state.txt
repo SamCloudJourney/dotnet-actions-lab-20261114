@@ -1,1 +1,1 @@
-Synthetic REAL git tag points to action version A; immutable pin also A.
+Synthetic REAL git tag forcibly retargeted to action version C; full SHA remains pinned to version A.
