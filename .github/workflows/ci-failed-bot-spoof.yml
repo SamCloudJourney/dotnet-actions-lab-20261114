@@ -1,0 +1,66 @@
+name: CI Boundary False-Pass Reporting Probe
+on:
+  workflow_run:
+    workflows: ['CI Boundary Deliberately Failed Producer']
+    types: [completed]
+permissions:
+  actions: read
+  issues: write
+  pull-requests: write
+jobs:
+  reproduce:
+    if: >-
+      github.repository == 'SamCloudJourney/dotnet-actions-lab-20261114' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'research/ci-failed-bot-spoof-20261116'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download result attached to deliberately failed source run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-boundary-failed-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Reproduce misleading all-passed comment in OWN LAB ONLY
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const source = context.payload.workflow_run;
+            const actualPR = source.pull_requests?.[0]?.number;
+            const requested = parseInt(fs.readFileSync('pr-number.txt','utf8').trim(),10);
+            const total = parseInt(fs.readFileSync('total.txt','utf8').trim(),10);
+            const exitCode = fs.readFileSync('exit-code.txt','utf8').trim();
+            const rawOutput = fs.readFileSync('sv-output.txt','utf8').trim();
+            // A hard gate limits this experiment to one designated researcher-owned fixture.
+            if (source.head_repository?.full_name !== context.repo.owner+'/'+context.repo.repo) throw Error('unexpected origin');
+            if (!Number.isSafeInteger(actualPR) || actualPR < 2) throw Error('unexpected source PR');
+            if (requested !== 1 || requested === actualPR) throw Error('unapproved comment target');
+            if (total !== 1 || exitCode !== '0' || source.conclusion !== 'failure') throw Error('expected mismatch missing');
+            const apparentVerdict = exitCode === '0' ? '✅ All checks passed' : '⛔ Validation failed';
+            const body = [
+              '**LAB ONLY — NOT A REAL VALIDATOR RESULT**',
+              '',
+              '## Synthetic Skill Validator Results',
+              'The next line illustrates how a failed source run can carry a forged success field:',
+              '',
+              '**Artifact-claimed verdict:** ' + apparentVerdict,
+              '**Actual GitHub source-run conclusion:** FAILURE',
+              '**Real triggering PR:** #' + actualPR,
+              '**Artifact-selected PR:** #' + requested,
+              '',
+              'Synthetic output: ' + rawOutput.replace(/[<>]/g,''),
+              '',
+              'This comment was generated in an owned, constrained test repository. No Microsoft asset was written.'
+            ].join('\n');
+            const response = await github.rest.issues.createComment({
+              owner:context.repo.owner,repo:context.repo.repo,
+              issue_number:requested,body
+            });
+            console.log('LAB_FALSE_PASS_COMMENT_CREATED=' + response.data.id);
+            console.log('LAB_FALSE_PASS_DATA=' + JSON.stringify({
+              sourceRun:source.id,sourceConclusion:source.conclusion,
+              actualPR,requested,artifactExitCode:exitCode,apparentVerdict
+            }));
