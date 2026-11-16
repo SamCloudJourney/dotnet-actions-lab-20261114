@@ -1,1 +1,1 @@
-Round 1: SHA pin A versus publisher branches at version B.
+Round 2: consumer uses unchanged refs; action @main and @v0.5 now version C; SHA pin must remain version A.
