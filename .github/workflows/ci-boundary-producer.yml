@@ -25,3 +25,5 @@ jobs:
           name: ci-boundary-synthetic
           path: ci-boundary/
           retention-days: 1
+
+# Lab marker ownership test only; deliberately no secrets.
