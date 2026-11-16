@@ -1,0 +1,36 @@
+name: MAUI success-gate negative control
+on:
+  workflow_run:
+    workflows: ['CI Boundary Deliberately Failed Producer']
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  maui-write-branch-gate:
+    if: >-
+      github.repository_owner == 'SamCloudJourney' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'research/maui-failed-upstream-20261116'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Must not execute after a failed source validation
+        run: |
+          echo 'MAUI_SUCCESS_GUARD_BROKEN=true'
+          exit 1
+  observe-negative-control:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_branch == 'research/maui-failed-upstream-20261116'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Record denied privileged job when producer failed
+        shell: bash
+        run: |
+          echo "SOURCE_RUN_OUTCOME=${{ github.event.workflow_run.conclusion }}"
+          echo "EXPECTED_PRIVILEGED_WRITE_JOB_SKIPPED=true"
