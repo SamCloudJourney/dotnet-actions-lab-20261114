@@ -1,0 +1,46 @@
+name: MAUI synthetic write-token downstream proof
+on:
+  workflow_run:
+    workflows: ['CI Boundary Synthetic Producer']
+    types: [completed]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  prove:
+    if: >-
+      github.repository == 'SamCloudJourney/dotnet-actions-lab-20261114' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'research/maui-write-scope-20261116'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prove write permission against controlled research branch only
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const branch = 'research/maui-write-evidence-20261116';
+            const path = 'research-evidence/MAUI_WRITE_SCOPE_PROOF.txt';
+            if (run.head_repository?.full_name !== 'SamCloudJourney/dotnet-actions-lab-20261114') throw new Error('unknown source');
+            const content = [
+              'LAB ONLY - controlled contents:write authority demonstration',
+              'Synthetic source run ID=' + run.id,
+              'Synthetic source branch=' + run.head_branch,
+              'Write destination=' + branch + ':' + path,
+              'Real external action executed=false',
+              'Microsoft credentials present=false',
+              'Production repository modified=false'
+            ].join('\n')+'\n';
+            const response = await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path,
+              message: 'lab: synthetic write-capable workflow_run evidence only',
+              content: Buffer.from(content).toString('base64'),
+              branch
+            });
+            console.log('LAB_MAUI_WRITE_CAPABILITY_CONFIRMED=true');
+            console.log('LAB_MAUI_COMMIT_SHA='+response.data.commit.sha);
+            console.log('LAB_MAUI_DESTINATION='+branch+':'+path);
