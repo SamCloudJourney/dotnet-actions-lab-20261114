@@ -1,0 +1,25 @@
+name: Third-party action ref drift - synthetic
+on:
+  push:
+    branches: [research/mutable-action-ref-20261116]
+permissions:
+  contents: read
+jobs:
+  branch-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Execute researcher-owned external composite @main with dummy strings
+        uses: SamCloudJourney/DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15/.github/actions/issue-sync-standin@main
+        env:
+          ado_token: DUMMY_ADO_PAT_UNUSABLE
+          github_token: DUMMY_GITHUB_PAT_UNUSABLE
+  ref-v05:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Execute researcher-owned external composite @v0.5 branch with dummy strings
+        uses: SamCloudJourney/DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15/.github/actions/issue-sync-standin@v0.5
+        env:
+          ado_token: DUMMY_ADO_PAT_UNUSABLE
+          github_token: DUMMY_GITHUB_PAT_UNUSABLE
