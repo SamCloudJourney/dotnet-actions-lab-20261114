@@ -26,3 +26,5 @@ jobs:
         run: |
           echo 'LAB_EXPECTED_FAILURE_AFTER_ARTIFACT_UPLOAD'
           exit 7
+
+# MAUI success-only workflow_run guard negative test (intentionally fails).
