@@ -25,3 +25,5 @@ jobs:
           name: ci-boundary-synthetic
           path: ci-boundary/
           retention-days: 1
+
+# Lab retry: consumer now matches upstream issues+pull-requests permissions.
