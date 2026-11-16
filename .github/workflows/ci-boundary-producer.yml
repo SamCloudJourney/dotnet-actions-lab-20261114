@@ -15,7 +15,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p ci-boundary
-          printf '%s\n' '${{ github.event.pull_request.number }}' > ci-boundary/pr-number.txt
+          printf '%s\n' '1' > ci-boundary/pr-number.txt
           printf '1\n' > ci-boundary/total.txt
           printf 'harmless synthetic validation output\n' > ci-boundary/sv-output.txt
           cat ci-boundary/pr-number.txt
