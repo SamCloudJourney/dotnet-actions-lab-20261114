@@ -1,0 +1,40 @@
+name: CI Boundary Synthetic Consumer
+on:
+  workflow_run:
+    workflows: ['CI Boundary Synthetic Producer']
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  examine:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download only triggering run artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-boundary-synthetic
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Observe artifact / event mismatch without posting comments
+        shell: bash
+        env:
+          TRUSTED_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          observed = open('pr-number.txt', encoding='utf-8').read().strip()
+          print('SAFE_WORKFLOW_RUN_BOUNDARY=' + json.dumps({
+            'artifact_requested_target': observed,
+            'associated_pr_number': os.getenv('TRUSTED_PR', ''),
+            'source_workflow_run': os.getenv('SOURCE_RUN', ''),
+            'no_secrets': True,
+            'no_comment_api_called': True,
+            'no_repository_write': True
+          }))
+          if observed == '90001':
+            print('FORGED_ARTIFACT_TARGET_OBSERVED')
+          PY
