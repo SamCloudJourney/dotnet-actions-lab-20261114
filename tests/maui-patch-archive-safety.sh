@@ -46,5 +46,24 @@ unzip -q -d "$t/zip_dest" "$t/zip-payload.zip" > "$t/unzip.log" 2>&1 || true
 test ! -f "$t/OUTSIDE_ZIP_ONLY_IN_LAB.txt"
 test ! -f "$t/../OUTSIDE_ZIP_ONLY_IN_LAB.txt"
 echo "MAUI_UNZIP_PARENT_ESCAPE_NOT_OBSERVED=true"
+mkdir -p "$t/workflow_repo"
+git -C "$t/workflow_repo" init -q
+git -C "$t/workflow_repo" config user.email lab@example.invalid
+git -C "$t/workflow_repo" config user.name Lab
+printf 'baseline\n' > "$t/workflow_repo/README.md"
+git -C "$t/workflow_repo" add README.md
+git -C "$t/workflow_repo" commit -qm baseline
+mkdir -p "$t/workflow_repo/.github/workflows"
+printf 'name: INERT-LAB-FIXTURE\n' > "$t/workflow_repo/.github/workflows/fixture.yml"
+git -C "$t/workflow_repo" add .github/workflows/fixture.yml
+git -C "$t/workflow_repo" commit -qm 'inert untrusted-looking workflow diff'
+git -C "$t/workflow_repo" format-patch --stdout HEAD~..HEAD > "$t/workflow.patch"
+git -C "$t/workflow_repo" reset -q --hard HEAD~
+(
+  cd "$t/workflow_repo"
+  git am --keep-cr < "$t/workflow.patch" >/dev/null
+)
+test -f "$t/workflow_repo/.github/workflows/fixture.yml"
+echo "MAUI_LOCAL_PATCH_CAN_ADD_WORKFLOW_FILE=true"
 echo "GITHUB_API_WRITES=false"
 echo "PRIVILEGED_EXTERNAL_ACTION_EXECUTED=false"
