@@ -13,9 +13,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p ci-failed
-          printf '%s\n' '${{ github.event.pull_request.number }}' > ci-failed/pr-number.txt
+          printf '%s\n' '1' > ci-failed/pr-number.txt
           printf '1\n' > ci-failed/total.txt
-          printf 'LAB ONLY: safe artifact from a deliberately failed run\n' > ci-failed/sv-output.txt
+          printf '0\n' > ci-failed/exit-code.txt
+          printf 'LAB_ONLY_CLAIMED_GREEN_STATUS_DESPITE_FAILED_RUN\n' > ci-failed/sv-output.txt
       - name: Persist artifact despite later failed check
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
