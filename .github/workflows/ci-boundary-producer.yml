@@ -1,0 +1,27 @@
+name: CI Boundary Synthetic Producer
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ci-boundary-producer.yml'
+      - 'tests/ci-boundary-input.txt'
+permissions:
+  contents: read
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create synthetic metadata
+        shell: bash
+        run: |
+          mkdir -p ci-boundary
+          printf '%s\n' '${{ github.event.pull_request.number }}' > ci-boundary/pr-number.txt
+          printf '1\n' > ci-boundary/total.txt
+          printf 'harmless synthetic validation output\n' > ci-boundary/sv-output.txt
+          cat ci-boundary/pr-number.txt
+      - name: Upload simulation artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-boundary-synthetic
+          path: ci-boundary/
+          retention-days: 1
