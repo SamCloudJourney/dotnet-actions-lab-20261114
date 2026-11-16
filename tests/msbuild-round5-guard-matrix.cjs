@@ -27,7 +27,7 @@ function guarded(x) {
   const humanMarker=(x.comments||[]).find(c=>c.body.includes(marker)&&c.user?.login!=='github-actions[bot]');
   const existingBot=(x.comments||[]).find(c=>c.body.includes(marker)&&c.user?.login==='github-actions[bot]');
   const output=(a.output||'').slice(0,32768),limited=(a.output||'').length>32768;
-  const escaped=output.split('\n').slice(0,10).map(s=>s.replace(/([\\|<>\[\]()*_])/g,'\\$1')).join('\n');
+  const escaped=output.slice(0,2048).split('\n').slice(0,10).map(s=>s.replace(/([\\|<>\[\]()*_])/g,'\\$1')).join('\n');
   const seq=output.match(new RegExp(BT+'+','g'))||[];
   const fence=BT.repeat(Math.max(3,...seq.map(s=>s.length+1)));
   const sourceFailure=r.conclusion!=='success';
