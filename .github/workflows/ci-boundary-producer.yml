@@ -25,3 +25,5 @@ jobs:
           name: ci-boundary-synthetic
           path: ci-boundary/
           retention-days: 1
+
+# Controlled MAUI write-token probe: no untrusted actions or code are executed.
