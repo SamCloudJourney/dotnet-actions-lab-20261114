@@ -1,0 +1,45 @@
+name: CI Boundary Failed-Source Run Consumer
+on:
+  workflow_run:
+    workflows: ['CI Boundary Deliberately Failed Producer']
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  observe:
+    if: >-
+      github.repository == 'SamCloudJourney/dotnet-actions-lab-20261114' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_branch == 'research/ci-failed-run-artifact-20261116'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read artifact from the failed source run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-boundary-failed-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Check event provenance instead of trusting artifact routing
+        shell: bash
+        env:
+          EXPECTED_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          requested = open('pr-number.txt').read().strip()
+          observed = {
+            'source_run':os.environ['SOURCE_RUN_ID'],
+            'source_conclusion':os.environ['SOURCE_CONCLUSION'],
+            'trusted_event_pr':os.environ.get('EXPECTED_PR',''),
+            'untrusted_artifact_pr':requested,
+            'cross_target':str(os.environ.get('EXPECTED_PR',''))!=requested,
+            'no_api_writes':True
+          }
+          print('LAB_FAILED_SOURCE_CONSUMER=' + json.dumps(observed))
+          assert observed['source_conclusion'] == 'failure'
+          assert observed['cross_target'] is True
+          PY
