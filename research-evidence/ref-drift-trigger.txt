@@ -1,1 +1,1 @@
-first immutable consumer workflow, publisher revision A
+second run; consumer workflow unchanged, upstream action @main and @v0.5 now contain version B
