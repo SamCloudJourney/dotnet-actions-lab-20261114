@@ -1,0 +1,34 @@
+name: CI Boundary Full SHA versus Mutable References
+on:
+  push:
+    branches: ['research/ci-immutable-ref-20261116']
+permissions:
+  contents: read
+jobs:
+  floating-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Synthetic action at main
+        uses: SamCloudJourney/DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15/.github/actions/issue-sync-standin@main
+        env:
+          ado_token: DUMMY_ADO_PAT_UNUSABLE
+          github_token: DUMMY_GITHUB_PAT_UNUSABLE
+  floating-v05:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Synthetic action at v0.5
+        uses: SamCloudJourney/DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15/.github/actions/issue-sync-standin@v0.5
+        env:
+          ado_token: DUMMY_ADO_PAT_UNUSABLE
+          github_token: DUMMY_GITHUB_PAT_UNUSABLE
+  pinned-full-sha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Synthetic action at 22aff82bd5324ef476cfb1db89bbd2b755e88cf1
+        uses: SamCloudJourney/DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15/.github/actions/issue-sync-standin@22aff82bd5324ef476cfb1db89bbd2b755e88cf1
+        env:
+          ado_token: DUMMY_ADO_PAT_UNUSABLE
+          github_token: DUMMY_GITHUB_PAT_UNUSABLE
