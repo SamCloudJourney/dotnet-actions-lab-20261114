@@ -1,0 +1,21 @@
+name: Round5 upstream action-ref resolution negative controls
+on:
+  push:
+    branches: [research/round5-reference-resolution-20261116]
+permissions:
+  contents: read
+jobs:
+  vstest-action-ref:
+    name: Historical VSTest third-party action current reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Resolve historical action with no secrets and read-only token
+        uses: pavelhorak/github-actions-issue-to-work-item@main
+  maui-action-ref:
+    name: Current MAUI autoformat-push v0.5 current reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Resolve current MAUI reference with no secrets and read-only token
+        uses: rolfbjarne/autoformat-push@v0.5
