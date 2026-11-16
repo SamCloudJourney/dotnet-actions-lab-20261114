@@ -1,0 +1,16 @@
+name: MAUI archive and git-am local safety checks
+on:
+  push:
+    branches: [research/maui-patch-integrity-20261116]
+permissions:
+  contents: read
+jobs:
+  local-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Test local patch and archive operations only
+        run: bash tests/maui-patch-archive-safety.sh
