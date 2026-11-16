@@ -1,0 +1,33 @@
+name: Round5 MAUI cross-repository token-scope control
+on:
+  push:
+    branches: [research/round5-cross-repo-token-20261116]
+permissions:
+  contents: write
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prove base-repo token cannot modify separate owned destination repo
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const targetRepo = 'DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15';
+            const targetBranch = 'research/round5-cross-repo-token-20261116';
+            const dest = 'research-evidence/THIS_CROSS_REPO_TOKEN_WRITE_SHOULD_FAIL.txt';
+            const payload = {
+              owner: context.repo.owner, repo:targetRepo,
+              path:dest, branch:targetBranch,
+              message:'LAB ONLY: cross-repository token scope experiment',
+              content:Buffer.from('harmless researcher-owned permission test\n').toString('base64')
+            };
+            try {
+              const result=await github.rest.repos.createOrUpdateFileContents(payload);
+              console.log('CROSS_REPOSITORY_WRITE_UNEXPECTEDLY_SUCCEEDED='+result.data.content?.sha);
+              throw Error('per-repository token unexpectedly authorized cross-repo write');
+            } catch(e) {
+              if(e.status !== 403 && e.status !== 404) throw e;
+              console.log('MAUI_BASE_REPOSITORY_TOKEN_OTHER_REPO_DENIED='+e.status);
+              console.log('CROSS_REPOSITORY_MUTATION=false');
+            }
