@@ -1,0 +1,30 @@
+name: MAUI read-only source-token content-write denial
+on:
+  push:
+    branches: [research/maui-read-only-token-20261116]
+permissions:
+  contents: read
+jobs:
+  rejected-mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read-only token must not write even to researcher-owned unprotected branch
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const path = 'research-evidence/READ_ONLY_TOKEN_CANNOT_WRITE.txt';
+            const branch = 'research/maui-write-evidence-20261116';
+            try {
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: context.repo.owner, repo: context.repo.repo,
+                path, branch,
+                message:'This mutation MUST be rejected',
+                content: Buffer.from('NEVER_COMMIT_THIS').toString('base64')
+              });
+              throw new Error('UNEXPECTED_CONTENT_WRITE_ALLOWED');
+            } catch (err) {
+              if (err.status !== 403) throw err;
+              console.log('MAUI_PR_JOB_CONTENTS_READ_WRITE_REJECTED=403');
+              console.log('NO_CONTENT_MUTATION_PERFORMED=true');
+            }
