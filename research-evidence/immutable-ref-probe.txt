@@ -1,0 +1,1 @@
+Round 1: SHA pin A versus publisher branches at version B.
