@@ -1,0 +1,19 @@
+name: MSBuild upstream comment handler source-fidelity tests
+on:
+  push:
+    branches:
+      - research/msbuild-source-fidelity-20261116
+permissions:
+  contents: read
+jobs:
+  immutable-upstream-logic:
+    name: Exact upstream JS + mocked GitHub API
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run exact upstream comment JS using mock GitHub API (no network calls)
+        shell: bash
+        run: node tests/msbuild-source-fidelity-harness.cjs
