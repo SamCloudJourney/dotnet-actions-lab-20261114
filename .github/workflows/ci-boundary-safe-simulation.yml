@@ -1,0 +1,58 @@
+name: CI boundary synthetic test (read-only)
+on:
+  push:
+    branches:
+      - research/workflow-boundary-20261116
+permissions:
+  contents: read
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Exercise synthetic artifact and action-ref trust boundaries
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const checks = [];
+          function check(name, fn) { fn(); checks.push({name, result:'PASS'}); }
+          const trusted = {runId: 50001, pr: 41, repo: 'example/synthetic'};
+          const good = {'total.txt':'1', 'pr-number.txt':'41', 'sv-output.txt':'normal output'};
+          const forged = {...good, 'pr-number.txt':'72suffix', 'sv-output.txt':'normal output'};
+          function historicalConsumer(a) {
+            const total = parseInt(a['total.txt'].trim(), 10);
+            if (total === 0) return null;
+            const prNumber = parseInt(a['pr-number.txt'].trim(), 10);
+            if (!prNumber) return null;
+            return {issue_number:prNumber, body:a['sv-output.txt']};
+          }
+          function boundConsumer(a,event) {
+            const n = Number(a['pr-number.txt']);
+            if (!Number.isSafeInteger(n) || n < 1 || n !== event.pr) throw Error('artifact target not bound to trigger');
+            return {issue_number:event.pr,body:a['sv-output.txt']};
+          }
+          check('normal validated target', () => assert.equal(historicalConsumer(good).issue_number,41));
+          check('forged target crosses validation context in original logic', () => assert.equal(historicalConsumer(forged).issue_number,72));
+          check('parseInt accepts trailing bytes', () => assert.equal(historicalConsumer(forged).issue_number,72));
+          check('bound consumer rejects forged target', () => assert.throws(()=>boundConsumer(forged,trusted), /not bound/));
+          check('bound consumer accepts own target', () => assert.equal(boundConsumer(good,trusted).issue_number,41));
+          check('zero total skips action', () => assert.equal(historicalConsumer({...good,'total.txt':'0'}),null));
+          check('synthetic comment output is treated as data not code', () => {
+            const a={...good, 'sv-output.txt':'```\\n### forged-looking validation heading'};
+            assert.equal(historicalConsumer(a).body,a['sv-output.txt']);
+          });
+          check('third party mutable names do not pin a code revision', () => {
+            const immutable = ref => /^[0-9a-f]{40}$/i.test(ref.split('@').pop());
+            assert.equal(immutable('example/action@main'),false);
+            assert.equal(immutable('example/action@v0.5'),false);
+            assert.equal(immutable('example/action@'+'a'.repeat(40)),true);
+          });
+          check('dummy credential handoff has no real tokens', () => {
+            const env={GITHUB_TEST_PAT:'DUMMY_NOT_VALID',AZURE_TEST_PAT:'DUMMY_NOT_VALID'};
+            assert.equal(env.GITHUB_TEST_PAT,'DUMMY_NOT_VALID');
+            assert.equal(env.AZURE_TEST_PAT,'DUMMY_NOT_VALID');
+          });
+          console.log('READ_ONLY_SYNTHETIC_LAB_EVIDENCE');
+          console.log(JSON.stringify({trusted,checks,passed:checks.length,realTokensUsed:false,externalActionsExecuted:false,githubWritesPerformed:false},null,2));
+          NODE
