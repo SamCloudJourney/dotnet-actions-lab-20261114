@@ -1,0 +1,25 @@
+name: CI Synthetic Git Tag Retarget Test
+on:
+  push:
+    branches: ['research/ci-real-tag-ref-20261116']
+permissions:
+  contents: read
+jobs:
+  tag-ref:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Invoke synthetic action via REAL movable Git tag
+        uses: SamCloudJourney/DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15/.github/actions/issue-sync-standin@v0.5-poc-20261116
+        env:
+          ado_token: DUMMY_ADO_PAT_UNUSABLE
+          github_token: DUMMY_GITHUB_PAT_UNUSABLE
+  sha-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Invoke same synthetic action at reviewed full SHA
+        uses: SamCloudJourney/DOTNET-DAYBREAK-SFB-RCE-EOP-2026-11-15/.github/actions/issue-sync-standin@22aff82bd5324ef476cfb1db89bbd2b755e88cf1
+        env:
+          ado_token: DUMMY_ADO_PAT_UNUSABLE
+          github_token: DUMMY_GITHUB_PAT_UNUSABLE
