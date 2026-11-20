@@ -1,0 +1,19 @@
+name: esc02 Windows runner availability
+on:
+  push:
+    branches:
+      - esc02-runner-probe-20261120
+    paths:
+      - .github/workflows/esc02-runner-availability.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  availability:
+    runs-on: windows-latest
+    steps:
+      - name: Record installed SDK
+        shell: pwsh
+        run: |
+          dotnet --info
+          Write-Output "esc02 runner started"
